@@ -1,0 +1,14 @@
+# This image is meant for use by the developer.
+# The local code directory should be mounted to /processor,
+# and then python3 setup.py install should be run to install.
+
+FROM safedocs/base/static-light
+
+# For developer's usage:
+RUN apt-get update -y && apt-get install -y jq tree curl wget vim man
+
+WORKDIR /root/.binaryninja
+COPY ./third-party/binaryninja/license.dat /root/.binaryninja/license.dat
+
+WORKDIR /processor
+ENTRYPOINT ["/bin/bash"]
