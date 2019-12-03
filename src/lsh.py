@@ -76,9 +76,8 @@ def weisfeiler_lehman(bbs: Dict[Basic_Block, int], iterations: int = 1) -> str:
         old_labels = new_labels
 
     # The set of labels associated with each basic block now captures the relationship between basic blocks in the CFG,
-    # however, a function with many CFGs will have a very long set of labels. Hash this list again for consistency.
+    # however, a function with many CFGs will have a very long set of labels. Hash this list again for hash consistency
     long_hash = ''.join(sorted(new_labels.values()))
-    # TODO: look into non-cryptographic hashing of Weisfeiler Lehman node structure
     m = hashlib.sha256()
     m.update(long_hash.encode('utf-8'))
     return m.digest().hex()
