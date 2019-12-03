@@ -1,5 +1,7 @@
+# Copyright 2019 River Loop Security LLC, All Rights Reserved
+# Author Rylan O'Connell
+
 import binaryninja as binja
-from json import JSONEncoder, JSONDecoder
 from typing import Dict
 
 # type aliases
@@ -20,6 +22,7 @@ class Annotations:
             function_tags = function.address_tags
 
             # to preserve annotation granularity, we store tags by their basic block # inside the function
+            # TODO: look into accuracy/performance tradeoff of switching to basic block hashes
             for _, addr, label in function_tags:
                 bb = bv.get_basic_blocks_at(addr)[0]
 
@@ -45,11 +48,11 @@ class Annotations:
         """
         return self.tagged_dict
 
-    def decode(self, raw_data: Dict[str, Dict[str, str]]) -> None:
+    def decode(self, raw_data: Dict[str, Dict[str, str]]):
         """
         Constructs Annotations object from nested dictionary
 
-        :param raw_data:
+        :param raw_data: nested dictionary of the form {hash: {tag.name: tag.data}}
         """
         for bb_num in raw_data:
             bb_tags = {}

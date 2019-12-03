@@ -8,13 +8,12 @@ import sys
 from typing import Dict
 
 
-def write_json(data: Dict[str, Annotations], file: str) -> None:
+def write_json(data: Dict[str, Annotations], file: str):
     """
     Dumps generated signatures to disk for comparision with other binaries
 
     :param data: dictionary mapping hashes to dictionary mapping basic block index to tag data
     :param file: full path to json file to be dumped
-    :return: None
     """
     if not os.path.exists(file):
         with open(file, 'w', encoding='utf-8') as output_file:
@@ -25,7 +24,7 @@ def write_json(data: Dict[str, Annotations], file: str) -> None:
         sys.exit(-1)
 
 
-def read_json(file: str) -> Dict[str, str]:
+def read_json(file: str) -> Dict[str, Dict[str, Dict[str, str]]]:
     """
     Reads previously generated signature file into dictionary for analysis
 

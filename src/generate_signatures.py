@@ -16,9 +16,10 @@ from tagging import read_tags
 def generate(bndb: str, sig_path: str):
     """
     Create signatures for all functions which have tagged basic blocks within the BNDB given.
-    :param bndb: str, path to BNDB input file that is tagged
-    :param sig_path: str, path to output JSON signature file to
-    :return: int, number of signatures generated
+
+    :param bndb: path to BNDB input file that is tagged
+    :param sig_path: path to output JSON signature file to
+    :return: number of signatures generated
     """
     bv = binja.BinaryViewType.get_view_of_file(bndb)
     hashes = hash_all(bv)

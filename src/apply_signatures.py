@@ -6,19 +6,21 @@
 import os
 import sys
 import argparse
-from annotations import Annotations
+from typing import Tuple
 
 import binaryninja as binja
 from lsh import hash_all
 from parsing import read_json
 from tagging import tag_function
+from annotations import Annotations
 
 
-def apply(binary_path: str, sig_path: str):
+def apply(binary_path: str, sig_path: str) -> Tuple[int, str]:
     """
+    Applies signatures in specified file to specified binary, and writes resulting bndb to disk
 
-    :param binary_path: str, path of binary to apply signatures to
-    :param sig_path: str, path of signature file to read in
+    :param binary_path: path of binary to apply signatures to
+    :param sig_path: path of signature file to read in
     :return: tuple (int count of function signatures matched, str path to BNDB with tags that was created)
     """
     bv = binja.BinaryViewType.get_view_of_file(binary_path)

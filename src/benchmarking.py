@@ -22,7 +22,7 @@ def get_tag_count(bv: Binary_View) -> Dict[Tuple[str, binja.TagType], int]:
     Counts all occurrences of each tag type
 
     :param bv: binaryview of file to analyze
-    :return: dict
+    :return: dict of the form {(tag_name, TagType): count}
     """
     tags = dict((tag_name, 0) for tag_name in bv.tag_types)
     for function in bv.functions:
