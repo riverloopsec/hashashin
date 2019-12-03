@@ -22,10 +22,14 @@ def generate(bndb: str, sig_path: str):
     :return: number of signatures generated
     """
     bv = binja.BinaryViewType.get_view_of_file(bndb)
+    print("Loaded BNDB {} into Binary Ninja.".format(bndb))
     hashes = hash_all(bv)
+    print("{} functions in binary have been hashed.".format(len(hashes)))
 
     signatures = read_tags(bv, hashes)
+    print("{} signatures have been created based on the present tags.".format(len(signatures)))
     write_json(signatures, sig_path)
+    print("Signature file written to {}.".format(sig_path))
     return len(signatures)
 
 
@@ -40,6 +44,9 @@ if __name__ == '__main__':
     if not os.path.isfile(args.bndb):
         print("Must provide valid path to Binary Ninja database.")
         sys.exit(-1)
+    if os.path.exists(args.signature_file):
+        print("Must provide a signature_file path that does not exist.")
+        sys.exit(-2)
 
     generate(args.bndb, args.signature_file)
 

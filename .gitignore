@@ -1,3 +1,6 @@
+third-party/binaryninja/BinaryNinja.zip
+third-party/binaryninja/license.dat
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
