@@ -8,8 +8,8 @@ This tool detects similar functions between binaries, and ports annotations (cur
 #### Installation in Docker
 
 Pre-requisites:
-- Obtain Binary Ninja headless `BinaryNinja.zip` from Vector35 and place at `third-party/binaryninja/BinaryNinja.zip`
-- Obtain Binary Ninja headless license from Vector35 and place at `third-party/binaryninja/license.dat`
+- Download a Linux version of [Binary Ninja](https://binary.ninja/) (commercial or headless) `BinaryNinja.zip` from Vector35 and place at `third-party/binaryninja/BinaryNinja.zip`
+- Place your license file at `third-party/binaryninja/license.dat`
 
 Then, build the provided Docker containers as described here:
 ```bash
