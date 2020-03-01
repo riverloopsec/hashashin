@@ -29,7 +29,12 @@ def diff(bndb_path, binary_path, sig_path) -> None:
         if function_hash in signatures:
             for bb in function.basic_blocks:
                 bb_hash = brittle_hash(bndb_bv, bb)
-
+                # basic block matches a block in the source
+                if bb_hash in signatures[function_hash]:
+                    bb.set_user_highlight(binja.highlight.HighlightStandardColor.GreenHighlightColor)
+                # basic block differs, but function is similar
+                else:
+                    bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
         # if function can't be aligned for comparison, assume all basic blocks are unique
         else:
             for bb in function:
