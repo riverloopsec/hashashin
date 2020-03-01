@@ -3,6 +3,7 @@
 
 import binaryninja as binja
 from typing import Dict
+from lsh import brittle_hash
 
 # type aliases
 Function = binja.function.Function
@@ -25,11 +26,12 @@ class Annotations:
             # TODO: look into accuracy/performance tradeoff of switching to basic block hashes
             for _, addr, label in function_tags:
                 bb = bv.get_basic_blocks_at(addr)[0]
+                bb_hash = brittle_hash(bv, bb)
 
                 # initialize tag mapping if it does not already exist
-                if bb.index not in self.tagged_dict.keys():
-                    self.tagged_dict[bb.index] = {}
-                self.tagged_dict[bb.index][label.type.name] = label.data
+                if bb_hash not in self.tagged_dict.keys():
+                    self.tagged_dict[bb_hash] = {}
+                self.tagged_dict[bb_hash][label.type.name] = label.data
 
         elif raw_data is not None:
             self.decode(raw_data)

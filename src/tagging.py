@@ -4,6 +4,7 @@
 import binaryninja as binja
 from annotations import Annotations
 from typing import Dict
+from lsh import brittle_hash
 
 # type aliases
 Function = binja.function.Function
@@ -23,12 +24,18 @@ def tag_function(bv: Binary_View, function: Function, hash: str,  signatures: Di
     tag_types = {}
 
     annotations = signatures[hash]
-    for bb_index in annotations.blocks():
-        bb = function.basic_blocks[int(bb_index)]
+    bb_hashes = {}
+    for bb in function:
+        bb_hashes[brittle_hash(bv, bb)] = bb
+
+    for bb_hash in annotations.blocks():
+        
+        if bb_hash in bb_hashes:
+            bb = bb_hashes[bb_hash]
 
         # keep a running list of tags so we don't have to create a new tag type each time
-        tag_name = list(signatures[hash][bb_index].keys())[0]
-        tag_data = signatures[hash][bb_index][tag_name]
+        tag_name = list(signatures[hash][bb_hash].keys())[0]
+        tag_data = signatures[hash][bb_hash][tag_name]
         if tag_name == '':
             continue
 
