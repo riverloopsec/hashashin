@@ -147,7 +147,8 @@ def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
                 if len(ops) == 3:
                     # TODO: operating under the assumption of const_ptr
                     ptr_offset = instr.operands[2][0].value
-                    anchors += str(bv.get_ascii_string_at(base_addr + ptr_offset.value))
+                    if ptr_offset.value is not None:
+                        anchors += str(bv.get_ascii_string_at(base_addr + ptr_offset.value))
 
     disassembly_text += anchors
     m = hashlib.sha256()
