@@ -29,7 +29,6 @@ def tag_function(bv: Binary_View, function: Function, hash: str,  signatures: Di
         bb_hashes[brittle_hash(bv, bb)] = bb
 
     for bb_hash in annotations.blocks():
-        
         if bb_hash in bb_hashes:
             bb = bb_hashes[bb_hash]
 

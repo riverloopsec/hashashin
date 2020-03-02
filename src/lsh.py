@@ -125,6 +125,10 @@ def vectorize(bb: Basic_Block) -> Vector:
 
 
 def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
+    # operands are only available on an IL, ensure we're working with one
+    if not bb.is_medium_level_il:
+        bb = bb.function.mlil.basic_blocks[bb.index]
+
     disassembly_text = ''.join([str(instr.operation) for instr in bb])
 
     # TODO: There may be a better/more general way to get this
