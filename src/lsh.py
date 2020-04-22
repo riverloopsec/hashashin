@@ -12,6 +12,19 @@ Basic_Block = binja.basicblock.BasicBlock
 Binary_View = binja.binaryview.BinaryView
 Vector = np.ndarray
 
+def hash_tagged(bv: Binary_View) -> Dict[str, Function]:
+    """
+    Iterate over tagged functions in the binary and calculate their hash.
+
+    :param bv: binary view encapsulating the binary
+    :return: a dictionary mapping hashes to functions
+    """
+    sigs = {}
+    for function in bv.functions:
+        if len(function.address_tags) == 0:
+            continue
+        sigs[hash_function(function)] = function
+    return sigs
 
 def hash_all(bv: Binary_View) -> Dict[str, Function]:
     """

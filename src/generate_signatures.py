@@ -8,7 +8,7 @@ import os
 import argparse
 
 import binaryninja as binja
-from lsh import hash_all
+from lsh import hash_tagged
 from parsing import write_json
 from tagging import read_tags
 
@@ -23,7 +23,7 @@ def generate(bndb: str, sig_path: str):
     """
     bv = binja.BinaryViewType.get_view_of_file(bndb)
     print("Loaded BNDB {} into Binary Ninja.".format(bndb))
-    hashes = hash_all(bv)
+    hashes = hash_tagged(bv)
     print("{} functions in binary have been hashed.".format(len(hashes)))
 
     signatures = read_tags(bv, hashes)

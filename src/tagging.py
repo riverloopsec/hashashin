@@ -35,7 +35,7 @@ def tag_function(bv: Binary_View, function: Function, hash: str,  signatures: Di
         if tag_name not in tag_types:
             tag_types[tag_name] = bv.create_tag_type(tag_name, tag_name[0].capitalize())
 
-        function.create_user_address_tag(bb.start, tag_types[tag_name], tag_data)
+        function.add_user_address_tag(bb.start, tag_types[tag_name], tag_data)
 
 
 def read_tags(bv: Binary_View, hashes: Dict[str, Function]) -> Dict[str, Annotations]:
