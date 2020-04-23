@@ -10,5 +10,8 @@ RUN apt-get update -y && apt-get install -y jq tree curl wget vim man
 WORKDIR /root/.binaryninja
 COPY ./third-party/binaryninja/license.dat /root/.binaryninja/license.dat
 
+WORKDIR /
+COPY ./src ./src
+
 WORKDIR /processor
 ENTRYPOINT ["/bin/bash"]

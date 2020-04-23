@@ -1,7 +1,7 @@
 # Do not run or use this directly.
 # This image is for use to build the prod or dev images off of.
 
-FROM ubuntu:16.04
+FROM ubuntu:18.04
 
 ENV DEBIAN_FRONTEND noninteractive
 

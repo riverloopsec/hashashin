@@ -39,7 +39,7 @@ However, you should be able to run locally as long as the dependencies are insta
 Provide a Binary Ninja database with tags applied to it which you want to identify.
 
 ```bash
-./src/generate_signatures.py <input_bndb> <signature_file>
+/src/generate_signatures.py <input_bndb> <signature_file>
 ```
 
 For example, `./src/generate_signatures.py tests/test1_annotated.bndb test1_annotated.sig`.
@@ -49,7 +49,7 @@ For example, `./src/generate_signatures.py tests/test1_annotated.bndb test1_anno
 ### Apply Signatures
 
 ```bash
-./src/apply_signatures.py <input_binary> <signature_file>
+/src/apply_signatures.py <input_binary> <signature_file>
 ```
 
 This will output to a file at the same path as the `input_binary` with `.bndb` appended,
