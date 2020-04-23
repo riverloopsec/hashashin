@@ -42,7 +42,7 @@ Provide a Binary Ninja database with tags applied to it which you want to identi
 /src/generate_signatures.py <input_bndb> <signature_file>
 ```
 
-For example, `./src/generate_signatures.py tests/test1_annotated.bndb test1_annotated.sig`.
+For example, `/src/generate_signatures.py tests/test1_annotated.bndb test1_annotated.sig`.
 
 > NOTE: On sizeable files with many functions, this process will take time.
 
