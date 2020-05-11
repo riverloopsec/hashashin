@@ -8,7 +8,6 @@ import binaryninja as binja
 import argparse
 import os
 import sys
-import time
 from typing import Dict, Tuple
 
 from generate_signatures import generate
@@ -20,7 +19,6 @@ Binary_View = binja.binaryview.BinaryView
 
 def diff(bndb_path, binary_path, sig_path) -> None:
     bndb_bv = binja.BinaryViewType.get_view_of_file(bndb_path)
-    binary_bv = binja.BinaryViewType.get_view_of_file(binary_path)
     signatures = read_json(sig_path)
 
     # align functions for diffing
@@ -39,6 +37,10 @@ def diff(bndb_path, binary_path, sig_path) -> None:
         else:
             for bb in function:
                 bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
+
+    output_bndb = os.path.join(os.getcwd(), bndb_path + '.bndb')
+    print("Writing output Binary Ninja database at {}".format(output_bndb))
+    bndb_bv.save(output_bndb)
 
 
 if __name__ == '__main__':
