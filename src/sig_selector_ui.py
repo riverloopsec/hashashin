@@ -58,13 +58,9 @@ class Signatures_UI(QDialog):
         # Create widgets
         self.setWindowModality(Qt.ApplicationModal)
         self.title = QLabel(self.tr("Signatures"))
-        self.saveButton = QPushButton(self.tr("&Save"))
-        self.saveButton.setShortcut(QKeySequence(self.tr("Ctrl+S")))
         self.setWindowTitle(self.title.text())
         #self.newFolderButton = QPushButton("New Folder")
         self.browseButton = QPushButton("Browse Signatures")
-        self.deleteSnippetButton = QPushButton("Delete")
-        self.newSnippetButton = QPushButton("New Snippet")
         self.resetting = False
         self.columns = 3
         self.context = context
@@ -80,7 +76,7 @@ class Signatures_UI(QDialog):
         #Files
         self.files = QFileSystemModel()
         self.files.setRootPath(signatures_path)
-        self.files.setNameFilters(["*.py"])
+        self.files.setNameFilters(["*.sig"])
 
         #Tree
         self.tree = QTreeView()
@@ -97,27 +93,21 @@ class Signatures_UI(QDialog):
         treeButtons = QHBoxLayout()
         #treeButtons.addWidget(self.newFolderButton)
         treeButtons.addWidget(self.browseButton)
-        treeButtons.addWidget(self.newSnippetButton)
-        treeButtons.addWidget(self.deleteSnippetButton)
         treeLayout.addLayout(treeButtons)
         treeWidget = QWidget()
         treeWidget.setLayout(treeLayout)
 
         # Create layout and add widgets
         buttons = QHBoxLayout()
-        buttons.addWidget(self.clearHotkeyButton)
         buttons.addWidget(self.keySequenceEdit)
         buttons.addWidget(self.currentHotkeyLabel)
-        buttons.addWidget(self.saveButton)
 
         description = QHBoxLayout()
         description.addWidget(QLabel(self.tr("Description: ")))
-        description.addWidget(self.snippetDescription)
 
         vlayoutWidget = QWidget()
         vlayout = QVBoxLayout()
         vlayout.addLayout(description)
-        vlayout.addWidget(self.edit)
         vlayout.addLayout(buttons)
         vlayoutWidget.setLayout(vlayout)
 
@@ -136,19 +126,12 @@ class Signatures_UI(QDialog):
             self.settings = QSettings("Vector 35", "Snippet Editor")
         if self.settings.contains("ui/snippeteditor/geometry"):
             self.restoreGeometry(self.settings.value("ui/snippeteditor/geometry"))
-        else:
-            self.edit.setMinimumWidth(80 * font.averageCharWidth())
-            self.edit.setMinimumHeight(30 * font.lineSpacing())
 
         # Set dialog layout
         self.setLayout(hlayout)
 
         # Add signals
-        self.saveButton.clicked.connect(self.save)
-        self.clearHotkeyButton.clicked.connect(self.clearHotkey)
         self.tree.selectionModel().selectionChanged.connect(self.selectFile)
-        self.newSnippetButton.clicked.connect(self.newFileDialog)
-        self.deleteSnippetButton.clicked.connect(self.deleteSnippet)
         #self.newFolderButton.clicked.connect(self.newFolder)
         self.browseButton.clicked.connect(self.browseSnippets)
 
@@ -157,10 +140,6 @@ class Signatures_UI(QDialog):
             self.tree.selectionModel().select(self.files.index(selectedName), QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
             if self.tree.selectionModel().hasSelection():
                 self.selectFile(self.tree.selectionModel().selection(), None)
-                self.edit.setFocus()
-                cursor = self.edit.textCursor()
-                cursor.setPosition(self.edit.document().characterCount()-1)
-                self.edit.setTextCursor(cursor)
             else:
                 self.readOnly(True)
         else:
@@ -176,7 +155,7 @@ class Signatures_UI(QDialog):
             Menu.mainMenu("Tools").removeAction(action)
             UIAction.unregisterAction(action)
 
-        for snippet in includeWalk(signatures_path, ".py"):
+        for snippet in includeWalk(signatures_path, ".sig"):
             print(snippet)
             '''          
             snippetKeys = None
@@ -197,18 +176,8 @@ class Signatures_UI(QDialog):
         self.currentHotkey = QKeySequence()
         self.currentHotkeyLabel.setText("")
         self.currentFileLabel.setText("")
-        self.snippetDescription.setText("")
-        self.edit.setPlainText("")
         self.currentFile = ""
 
-    def reject(self):
-        self.settings.setValue("ui/snippeteditor/geometry", self.saveGeometry())
-
-        if self.snippetChanged():
-            question = QMessageBox.question(self, self.tr("Discard"), self.tr("You have unsaved changes, quit anyway?"))
-            if question != QMessageBox.StandardButton.Yes:
-                return
-        self.accept()
 
     def browseSnippets(self):
         url = QUrl.fromLocalFile(signatures_path)
@@ -251,16 +220,14 @@ class Signatures_UI(QDialog):
     def loadSnippet(self):
         self.currentFileLabel.setText(QFileInfo(self.currentFile).baseName())
         (snippetDescription, snippetKeys, snippetCode) = loadSnippetFromFile(self.currentFile)
-        self.snippetDescription.setText(snippetDescription) if snippetDescription else self.snippetDescription.setText("")
         self.keySequenceEdit.setKeySequence(snippetKeys) if snippetKeys else self.keySequenceEdit.setKeySequence(QKeySequence(""))
-        self.edit.setPlainText(snippetCode) if snippetCode else self.edit.setPlainText("")
         self.readOnly(False)
 
     def newFileDialog(self):
         (snippetName, ok) = QInputDialog.getText(self, self.tr("Snippet Name"), self.tr("Snippet Name: "))
         if ok and snippetName:
-            if not snippetName.endswith(".py"):
-                snippetName += ".py"
+            if not snippetName.endswith(".sig"):
+                snippetName += ".sig"
             index = self.tree.selectionModel().currentIndex()
             selection = self.files.filePath(index)
             if QFileInfo(selection).isDir():
@@ -274,14 +241,6 @@ class Signatures_UI(QDialog):
 
     def readOnly(self, flag):
         self.keySequenceEdit.setEnabled(not flag)
-        self.snippetDescription.setReadOnly(flag)
-        self.edit.setReadOnly(flag)
-        if flag:
-            self.snippetDescription.setDisabled(True)
-            self.edit.setDisabled(True)
-        else:
-            self.snippetDescription.setEnabled(True)
-            self.edit.setEnabled(True)
 
 def launchPlugin(context):
     snippets = Signatures_UI(context)
