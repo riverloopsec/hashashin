@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-from lsh import hash_function
+from . import lsh
 
 from binaryninja.plugin import PluginCommand
 from binaryninja.plugin import BackgroundTaskThread
@@ -12,10 +12,10 @@ class HashFunctionInBackground(BackgroundTaskThread):
         self.function = function
 
     def run(self):
-        print(hash_function(self.function))
+        print(lsh.hash_function(self.function))
 
 
-def hash_in_background(function):
+def hash_in_background(bv, function):
     background_task = HashFunctionInBackground(function, "Hashing function")
     background_task.start()
 
