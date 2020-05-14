@@ -15,10 +15,10 @@ class GenFunctionSigInBackground(BackgroundTaskThread):
         self.bv = bv
 
     def run(self):
-        hash = lsh.hash_function(self.function)
-        print("Hash of {} is {}".format(hex(self.function.lowest_address), hash))
+        function_hash = lsh.hash_function(self.function)
+        print("Hash of {} is {}".format(hex(self.function.lowest_address), function_hash))
 
-        signatures = tagging.read_tags(self.bv, {hash: self.function})
+        signatures = tagging.read_tags(self.bv, {function_hash: self.function})
         sig_path = get_save_filename_input("Signature File")
         parsing.write_json(signatures, sig_path)
 
@@ -31,8 +31,8 @@ class ApplyFunctionSigInBackground(BackgroundTaskThread):
         self.bv = bv
 
     def run(self):
-        hash = lsh.hash_function(self.function)
-        print("Hash of {} is {}".format(hex(self.function.lowest_address), hash))
+        function_hash = lsh.hash_function(self.function)
+        print("Hash of {} is {}".format(hex(self.function.lowest_address), function_hash))
 
         sig_path = get_open_filename_input("Signature File")
         data = parsing.read_json(sig_path)
@@ -44,9 +44,9 @@ class ApplyFunctionSigInBackground(BackgroundTaskThread):
 
         print("Signature file {} loaded into memory.".format(sig_path))
 
-        if hash in signatures:
-            tag_function(self.bv, self.function, hash, signatures)
-            print('Located a match at {}!'.format(hash))
+        if function_hash in signatures:
+            tag_function(self.bv, self.function, function_hash, signatures)
+            print('Located a match at {}!'.format(function_hash))
 
 
 
