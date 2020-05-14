@@ -1,0 +1,29 @@
+{
+   "pluginmetadataversion": 2,
+   "name": "Hashashin",
+   "author": "Rylan O'Connell",
+   "type": [
+      "ui"
+   ],
+   "api": [
+      "python3"
+   ],
+   "description": "A fuzzy hashing plugin built on top of BinaryNinja's IL",
+   "longdescription": "",
+   "license": {
+      "name": "",
+      "text": ""
+   },
+   "platforms": [
+      "Darwin",
+      "Windows",
+      "Linux"
+   ],
+   "installinstructions": {
+      "Darwin": "",
+      "Windows": "",
+      "Linux": ""
+   },
+   "version": "1.2.1",
+   "minimumbinaryninjaversion": 0
+}

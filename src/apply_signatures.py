@@ -9,10 +9,10 @@ import argparse
 from typing import Tuple
 
 import binaryninja as binja
-from lsh import hash_all
-from parsing import read_json
-from tagging import tag_function
-from annotations import Annotations
+from utils.lsh import hash_all
+from utils.parsing import read_json
+from utils.tagging import tag_function
+from utils.annotations import Annotations
 
 
 def apply(binary_path: str, sig_path: str) -> Tuple[int, str]:

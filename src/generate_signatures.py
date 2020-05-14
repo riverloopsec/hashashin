@@ -8,9 +8,9 @@ import os
 import argparse
 
 import binaryninja as binja
-from lsh import hash_tagged
-from parsing import write_json
-from tagging import read_tags
+from utils.lsh import hash_tagged
+from utils.parsing import write_json
+from utils.tagging import read_tags
 
 
 def generate(bndb: str, sig_path: str):

@@ -2,7 +2,7 @@
 # Author Rylan O'Connell
 
 import json
-from annotations import Annotations
+from .annotations import Annotations
 import os
 import sys
 from typing import Dict
