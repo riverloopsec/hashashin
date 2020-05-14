@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
-from binaryninjaui.binaryninjaui import UIAction, UIActionHandler
 
-from . import sig_selector_ui
 from . import lsh
+from . import parsing
+from . import tagging
 
 from binaryninja.plugin import PluginCommand
 from binaryninja.plugin import BackgroundTaskThread
+from binaryninja.interaction import get_open_filename_input, get_save_filename_input
 
 
-class HashFunctionInBackground(BackgroundTaskThread):
-    def __init__(self, function, msg):
+class GenFunctionSigInBackground(BackgroundTaskThread):
+
+    def __init__(self, function, bv, msg):
         BackgroundTaskThread.__init__(self, msg, True)
         self.function = function
+        self.bv = bv
 
     def run(self):
-        print(lsh.hash_function(self.function))
+        hash = lsh.hash_function(self.function)
+        print("Hash of {} is {}".format(hex(self.function.lowest_address), hash))
 
+        signatures = tagging.read_tags(self.bv, {hash: self.function})
+        sig_path = get_save_filename_input("Signature File")
+        parsing.write_json(signatures, sig_path)
 
 def hash_in_background(bv, function):
-    background_task = HashFunctionInBackground(function, "Hashing function")
-    background_task.start()
+    hash_task = GenFunctionSigInBackground(function, bv, "Hashing function at {}...".format(hex(function.lowest_address)))
+    hash_task.start()
 
 
-PluginCommand.register_for_function("Hash", "Produce fuzzy hash of current function",
+PluginCommand.register_for_function("Generate Signatures", "Produce fuzzy hash of current function",
                                     hash_in_background)
-sig_selector_ui.Signatures_UI.registerAllSnippets()
-UIAction.registerAction("Hashashin\\Select Signature File...")
-UIActionHandler.globalActions().bindAction("Hashashin\\Select Signature File...", UIAction(sig_selector_ui.launchPlugin))

@@ -2,13 +2,14 @@
 # Author Rylan O'Connell
 
 import json
-from annotations import Annotations
+from . import annotations
+#from  annotations import Annotations
 import os
 import sys
 from typing import Dict
 
 
-def write_json(data: Dict[str, Annotations], file: str):
+def write_json(data: Dict[str, annotations.Annotations], file: str):
     """
     Dumps generated signatures to disk for comparision with other binaries
 
