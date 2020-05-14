@@ -2,7 +2,6 @@
 # Author Rylan O'Connell
 
 import json
-#from . import annotations
 from .annotations import Annotations
 import os
 import sys
