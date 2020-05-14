@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 
-from . import lsh
-from . import parsing
-from . import tagging
+from .utils import lsh, parsing, tagging
 
 from binaryninja.plugin import PluginCommand
 from binaryninja.plugin import BackgroundTaskThread
-from binaryninja.interaction import get_open_filename_input, get_save_filename_input
+from binaryninja.interaction import get_save_filename_input
 
 
 class GenFunctionSigInBackground(BackgroundTaskThread):

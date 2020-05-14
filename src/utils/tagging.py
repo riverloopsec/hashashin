@@ -2,10 +2,9 @@
 # Author Rylan O'Connell
 
 import binaryninja as binja
-#from annotations import Annotations
-from . import annotations
+from.annotations import Annotations
+#from . import annotations
 from typing import Dict
-from lsh import brittle_hash
 
 # type aliases
 Function = binja.function.Function
@@ -13,7 +12,7 @@ Basic_Block = binja.basicblock.BasicBlock
 Binary_View = binja.binaryview.BinaryView
 
 
-def tag_function(bv: Binary_View, function: Function, sig: str,  signatures: Dict[str, annotations.Annotations]) -> None:
+def tag_function(bv: Binary_View, function: Function, sig: str,  signatures: Dict[str, Annotations]) -> None:
     """
     Port tags for each basic block from signatures dictionary into current binary.
 
@@ -41,7 +40,7 @@ def tag_function(bv: Binary_View, function: Function, sig: str,  signatures: Dic
             function.add_user_address_tag(bb.start, tag)
 
 
-def read_tags(bv: Binary_View, hashes: Dict[str, Function]) -> Dict[str, annotations.Annotations]:
+def read_tags(bv: Binary_View, hashes: Dict[str, Function]) -> Dict[str, Annotations]:
     """
     Gathers tag locations from every function in the binary.
 
@@ -54,5 +53,5 @@ def read_tags(bv: Binary_View, hashes: Dict[str, Function]) -> Dict[str, annotat
     # TODO: switch to use GetAllTagReferences once it's available in the python API for O(1) access times
     for hash_value in hashes:
         function = hashes[hash_value]
-        tagged_dict[hash_value] = annotations.Annotations(function=function, bv=bv)
+        tagged_dict[hash_value] = Annotations(function=function, bv=bv)
     return tagged_dict
