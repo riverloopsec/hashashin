@@ -3,7 +3,6 @@
 
 import binaryninja as binja
 from.annotations import Annotations
-#from . import annotations
 from typing import Dict
 
 # type aliases
