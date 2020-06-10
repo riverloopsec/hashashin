@@ -135,3 +135,34 @@ def vectorize(bb: Basic_Block) -> Vector:
     for instr in bb:
         vector[instr.operation.value] += 1
     return np.fromiter(vector.values(), dtype=int)
+
+def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
+    # operands are only available on an IL, ensure we're working with one
+    if not bb.is_medium_level_il:
+        bb = bb.function.mlil.basic_blocks[bb.index]
+
+    disassembly_text = ''.join([str(instr.operation) for instr in bb])
+
+    # TODO: There may be a better/more general way to get this
+    base_addr = bv.segments[0].start
+
+    anchors = ''
+    for instr in bb:
+        # only triggered on GOTO/operations w/out args?
+        if len(instr.operands) < 3:
+            pass
+
+        else:
+            ops = instr.operands[2]
+            if type(ops) == list:
+                # known workaround to parse instruction arg types
+                if len(ops) == 3:
+                    # TODO: operating under the assumption of const_ptr
+                    ptr_offset = instr.operands[2][0].value
+                    if ptr_offset.value is not None:
+                        anchors += str(bv.get_ascii_string_at(base_addr + ptr_offset.value))
+
+    disassembly_text += anchors
+    m = hashlib.sha256()
+    m.update(disassembly_text.encode('utf-8'))
+    return m.digest().hex()

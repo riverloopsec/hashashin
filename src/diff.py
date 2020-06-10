@@ -11,8 +11,8 @@ import sys
 from typing import Dict, Tuple
 
 from generate_signatures import generate
-from parsing import read_json
-from lsh import brittle_hash, hash_function
+from utils.parsing import read_json
+from utils.lsh import brittle_hash, hash_function
 
 Binary_View = binja.binaryview.BinaryView
 

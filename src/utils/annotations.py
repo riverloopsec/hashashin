@@ -3,7 +3,7 @@
 
 import binaryninja as binja
 from typing import Dict
-from lsh import brittle_hash
+from .lsh import brittle_hash
 
 # type aliases
 Function = binja.function.Function
