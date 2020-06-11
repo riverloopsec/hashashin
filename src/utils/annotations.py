@@ -22,8 +22,6 @@ class Annotations:
         if (function is not None) and (bv is not None):
             function_tags = function.address_tags
 
-            # to preserve annotation granularity, we store tags by their basic block # inside the function
-            # TODO: look into accuracy/performance tradeoff of switching to basic block hashes
             for _, addr, label in function_tags:
                 bb = bv.get_basic_blocks_at(addr)[0]
                 bb_hash = brittle_hash(bv, bb)

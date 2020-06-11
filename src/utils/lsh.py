@@ -12,6 +12,7 @@ Basic_Block = binja.basicblock.BasicBlock
 Binary_View = binja.binaryview.BinaryView
 Vector = np.ndarray
 
+
 def hash_tagged(bv: Binary_View) -> Dict[str, Function]:
     """
     Iterate over tagged functions in the binary and calculate their hash.
@@ -25,6 +26,7 @@ def hash_tagged(bv: Binary_View) -> Dict[str, Function]:
             continue
         sigs[hash_function(function)] = function
     return sigs
+
 
 def hash_all(bv: Binary_View) -> Dict[str, Function]:
     """
@@ -135,6 +137,7 @@ def vectorize(bb: Basic_Block) -> Vector:
     for instr in bb:
         vector[instr.operation.value] += 1
     return np.fromiter(vector.values(), dtype=int)
+
 
 def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
     # operands are only available on an IL, ensure we're working with one

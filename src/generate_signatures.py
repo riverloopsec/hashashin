@@ -8,22 +8,24 @@ import os
 import argparse
 
 import binaryninja as binja
-from utils.lsh import hash_tagged
+from utils.lsh import hash_tagged, hash_all
 from utils.parsing import write_json
 from utils.tagging import read_tags
 
 
-def generate(bndb: str, sig_path: str):
+def generate(bndb: str, sig_path: str, all_signatures: bool=False):
     """
     Create signatures for all functions which have tagged basic blocks within the BNDB given.
 
     :param bndb: path to BNDB input file that is tagged
     :param sig_path: path to output JSON signature file to
+    :param all_signatures: whether to generate signatures for ALL functions, or only those with tags associated with them
     :return: number of signatures generated
     """
     bv = binja.BinaryViewType.get_view_of_file(bndb)
     print("Loaded BNDB {} into Binary Ninja.".format(bndb))
-    hashes = hash_all(bv)
+    hashes = hash_all(bv) if all_signatures else hash_tagged(bv)
+
     print("{} functions in binary have been hashed.".format(len(hashes)))
 
     signatures = read_tags(bv, hashes)
