@@ -19,6 +19,7 @@ def diff(dst_path: str, signatures: Dict[str, Tuple[str]]) -> None:
     dst_bv = binja.BinaryViewType.get_view_of_file(dst_path)
 
     mismatched_tt = dst_bv.create_tag_type('Difference', '🚫')
+    new_function_tt = dst_bv.create_tag_type('New function', '➕')
 
     # align functions for diffing
     for function in dst_bv.functions:
@@ -33,11 +34,15 @@ def diff(dst_path: str, signatures: Dict[str, Tuple[str]]) -> None:
                 # basic block differs, but function is similar
                 else:
                     print('tagging mismatch...')
-                    tag = function.create_tag(mismatched_tt, 'test')
+                    tag = function.create_tag(mismatched_tt, '')
                     function.add_user_address_tag(bb.start, tag)
                     bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
+
         # if function can't be aligned for comparison, assume all basic blocks are unique
         else:
+            tag = function.create_tag(new_function_tt, 'New function')
+            function.add_user_address_tag(function.start, tag)
+
             for bb in function:
                 bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
 
