@@ -141,31 +141,41 @@ def vectorize(bb: Basic_Block) -> Vector:
 
 def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
     # operands are only available on an IL, ensure we're working with one
-    if not bb.is_medium_level_il:
-        bb = bb.function.mlil.basic_blocks[bb.index]
+    if not bb.is_il:
+        bb = bb.function.hlil.basic_blocks[bb.index]
 
     disassembly_text = ''.join([str(instr.operation) for instr in bb])
 
-    # TODO: There may be a better/more general way to get this
-    base_addr = bv.segments[0].start
-
-    anchors = ''
+    anchors = []
     for instr in bb:
-        # only triggered on GOTO/operations w/out args?
-        if len(instr.operands) < 3:
-            pass
+        if instr.operation == binja.HighLevelILOperation.HLIL_ASSIGN:
+            src = instr.src
 
-        else:
-            ops = instr.operands[2]
-            if type(ops) == list:
-                # known workaround to parse instruction arg types
-                if len(ops) == 3:
-                    # TODO: operating under the assumption of const_ptr
-                    ptr_offset = instr.operands[2][0].value
-                    if ptr_offset.value is not None:
-                        anchors += str(bv.get_ascii_string_at(base_addr + ptr_offset.value))
+            # check constant strings
+            if src.operation == binja.HighLevelILOperation.HLIL_CONST_PTR:
+                address = src.constant
 
-    disassembly_text += anchors
+                # filter out false positives/pointers to other data types
+                anchor = bv.get_ascii_string_at(address)
+                if anchor is not None:
+                    anchors.append(str(anchor))
+
+            # check arguments to function call
+            elif src.operation == binja.HighLevelILOperation.HLIL_CALL:
+                args = src.operands[1]  # isolate arguments from callee function
+                for argument in args:
+                    if argument.operation == binja.HighLevelILOperation.HLIL_CONST_PTR:
+                        # filter out false positives/pointers to other data types
+                        anchor = bv.get_ascii_string_at(argument.constant)
+                        if anchor is not None:
+                            anchors.append(str(anchor))
+
+        # TODO: check function calls outside assignments
+
+    # sort anchors to guarantee consistency
+    anchors.sort()
+    anchor_text = ''.join(anchors)
+    disassembly_text += anchor_text
     m = hashlib.sha256()
     m.update(disassembly_text.encode('utf-8'))
     return m.digest().hex()

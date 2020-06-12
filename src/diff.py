@@ -25,7 +25,7 @@ def diff(dst_path: str, signatures: Dict[str, Tuple[str]]) -> None:
         function_hash = hash_function(function)
         if function_hash in signatures:
             print('aligned {}...'.format(function.name))
-            for bb in function.basic_blocks:
+            for bb in function.hlil.basic_blocks:
                 bb_hash = brittle_hash(dst_bv, bb)
                 # basic block matches a block in the source
                 if bb_hash in signatures[function_hash]:
@@ -69,12 +69,12 @@ if __name__ == '__main__':
     for function in bv.functions:
         function_hash = hash_function(function)
         bb_hashes = []
-        for bb in function.basic_blocks:
+        for bb in function.hlil.basic_blocks:
             bb_hashes.append(brittle_hash(bv, bb))
 
         signatures[function_hash] = bb_hashes
 
-    print('Signatures generated for {}...'.format(args.src))
+    print('{} ingested...'.format(args.src))
 
     print('Starting diffing...')
     diff(args.dst, signatures)
