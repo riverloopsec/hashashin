@@ -43,7 +43,12 @@ def diff(dst_path: str, signatures: Dict[str, Tuple[str]]) -> None:
 
     output_bndb = os.path.join(os.getcwd(), dst_path + '.bndb')
     print("Writing output Binary Ninja database at {}".format(output_bndb))
-    dst_bv.save(output_bndb)
+    if not os.path.isfile(output_bndb):
+        print('writing view to database...')
+        dst_bv.create_database(output_bndb)
+    else:
+        print('updating database...')
+        dst_bv.save(output_bndb)
 
 
 if __name__ == '__main__':
