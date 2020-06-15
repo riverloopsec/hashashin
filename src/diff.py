@@ -8,43 +8,53 @@ import binaryninja as binja
 import argparse
 import os
 import sys
-from typing import Dict, Tuple
+import math
+import networkx as nx
+from typing import Dict, Tuple, List
 
 from utils.lsh import brittle_hash, hash_function
 
 Binary_View = binja.binaryview.BinaryView
 
 
-def diff(dst_path: str, signatures: Dict[str, Tuple[str]]) -> None:
+def diff(dst_path: str, pairings: List[nx.DiGraph]) -> None:
     dst_bv = binja.BinaryViewType.get_view_of_file(dst_path)
 
     mismatched_tt = dst_bv.create_tag_type('Difference', '🚫')
     new_function_tt = dst_bv.create_tag_type('New function', '➕')
 
     # align functions for diffing
+    # TODO: exclude thunks/etc.
     for function in dst_bv.functions:
-        function_hash = hash_function(function)
-        if function_hash in signatures:
-            print('aligned {}...'.format(function.name))
-            for bb in function.hlil.basic_blocks:
-                bb_hash = brittle_hash(dst_bv, bb)
-                # basic block matches a block in the source
-                if bb_hash in signatures[function_hash]:
-                    bb.set_user_highlight(binja.highlight.HighlightStandardColor.GreenHighlightColor)
-                # basic block differs, but function is similar
-                else:
-                    print('tagging mismatch...')
-                    tag = function.create_tag(mismatched_tt, '')
-                    function.add_user_address_tag(bb.start, tag)
-                    bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
+        hash_cfg = function_graph(dst_bv, function.hlil)
+        min_pairing = get_min_pair(hash_cfg, pairings)
 
-        # if function can't be aligned for comparison, assume all basic blocks are unique
-        else:
+        # if pairing failed, the function must be new to this binary
+        if min_pairing is None:
+            print('No suitable function pairing for {}'.format(function.name))
             tag = function.create_tag(new_function_tt, 'New function')
             function.add_user_address_tag(function.start, tag)
 
             for bb in function:
                 bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
+            continue
+
+        print('Successfully aligned {} to {}'.format(function.name, min_pairing.name))
+        for bb in function.hlil.basic_blocks:
+            # TODO: optmize to avoid second hashing
+            bb_hash = brittle_hash(dst_bv, bb)
+
+            # basic block matches a block in the source
+            if min_pairing.has_node(bb_hash):
+                bb.set_user_highlight(binja.highlight.HighlightStandardColor.GreenHighlightColor)
+
+            # basic block differs, but function is similar
+            else:
+                print('tagging mismatch at {}...'.format(hex(bb.start)))
+                tag = function.create_tag(mismatched_tt, '')
+                function.add_user_address_tag(bb.start, tag)
+                bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
+
 
     output_bndb = os.path.join(os.getcwd(), dst_path + '.bndb')
     print("Writing output Binary Ninja database at {}".format(output_bndb))
@@ -54,6 +64,60 @@ def diff(dst_path: str, signatures: Dict[str, Tuple[str]]) -> None:
     else:
         print('updating database...')
         dst_bv.save(output_bndb)
+
+
+def get_min_pair(function: nx.DiGraph, pairings: List[nx.DiGraph]) -> nx.DiGraph:
+    min_distance = math.inf
+    min_pairing = None
+
+    for pairing in pairings:
+        distance = function_difference(function, pairing)
+        # TODO: add threshold
+        if distance < min_distance:
+            min_distance = distance
+            min_pairing = pairing
+
+    return min_pairing
+
+
+def function_difference(f1: nx.DiGraph, f2: nx.DiGraph) -> float:
+    distance = 0.0
+
+    for block in f1.nodes:
+        if not f2.has_node(block):
+            distance += 1
+    for block in f2.nodes:
+        if not f1.has_node(block):
+            distance += 1
+
+    for edge in f1.edges:
+        if not f2.has_edge(edge[0], edge[1]):
+            distance += 0.1
+    for edge in f2.edges:
+        if not f1.has_edge(edge[0], edge[1]):
+            distance += 0.1
+
+    return distance
+
+
+def function_graph(bv: binja.binaryview.BinaryView, function: binja.highlevelil.HighLevelILFunction) -> nx.DiGraph:
+    graph = nx.DiGraph()
+    graph.name = function.source_function.name
+
+    bbs = {}
+    for bb in function:
+        bb_hash = brittle_hash(bv, bb)
+        graph.add_node(bb_hash)
+        bbs[bb] = bb_hash
+
+    for bb in function:
+        bb_hash = bbs[bb]
+        outgoing = bb.outgoing_edges
+        for edge in outgoing:
+            target_hash = bbs[edge.target]
+            graph.add_edge(bb_hash, target_hash)
+
+    return graph
 
 
 if __name__ == '__main__':
@@ -70,16 +134,13 @@ if __name__ == '__main__':
 
     # compute function and basic block hashes for the source binary
     bv = binja.BinaryViewType.get_view_of_file(args.src)
-    signatures = {}
+    functions = []
+    # TODO: exclude thunks/etc.
     for function in bv.functions:
-        function_hash = hash_function(function)
-        bb_hashes = []
-        for bb in function.hlil.basic_blocks:
-            bb_hashes.append(brittle_hash(bv, bb))
-
-        signatures[function_hash] = bb_hashes
+        hash_cfg = function_graph(bv, function.hlil)
+        functions.append(hash_cfg)
 
     print('{} ingested...'.format(args.src))
 
     print('Starting diffing...')
-    diff(args.dst, signatures)
+    diff(args.dst, functions)
