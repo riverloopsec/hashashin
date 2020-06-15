@@ -144,6 +144,7 @@ def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
     if not bb.is_il:
         bb = bb.function.hlil.basic_blocks[bb.index]
 
+    # TODO: filter out addresses/unnamed functions/GOTOs
     disassembly_text = ''.join([str(instr.operation) for instr in bb])
 
     anchors = []
@@ -170,7 +171,14 @@ def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
                         if anchor is not None:
                             anchors.append(str(anchor))
 
-        # TODO: check function calls outside assignments
+        elif instr.operation == binja.HighLevelILOperation.HLIL_CALL:
+            args = instr.operands[1]  # isolate arguments from callee function
+            for argument in args:
+                if argument.operation == binja.HighLevelILOperation.HLIL_CONST_PTR:
+                    # filter out false positives/pointers to other data types
+                    anchor = bv.get_ascii_string_at(argument.constant)
+                    if anchor is not None:
+                        anchors.append(str(anchor))
 
     # sort anchors to guarantee consistency
     anchors.sort()
