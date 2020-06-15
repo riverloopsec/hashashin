@@ -26,8 +26,12 @@ def diff(dst_path: str, pairings: List[nx.DiGraph]) -> None:
     # align functions for diffing
     # TODO: exclude thunks/etc.
     for function in dst_bv.functions:
+        # ignore small functions to avoid false positives
+        if len(function.basic_blocks) < 5:
+            continue
+
         hash_cfg = function_graph(dst_bv, function.hlil)
-        min_pairing = get_min_pair(hash_cfg, pairings)
+        min_pairing, distance = get_min_pair(hash_cfg, pairings)
 
         # if pairing failed, the function must be new to this binary
         if min_pairing is None:
@@ -39,7 +43,9 @@ def diff(dst_path: str, pairings: List[nx.DiGraph]) -> None:
                 bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
             continue
 
-        print('Successfully aligned {} to {}'.format(function.name, min_pairing.name))
+        if distance > 0:
+            print('Successfully aligned {} to {} (delta: {})'.format(function.name, min_pairing.name, distance))
+
         for bb in function.hlil.basic_blocks:
             # TODO: optmize to avoid second hashing
             bb_hash = brittle_hash(dst_bv, bb)
@@ -66,18 +72,19 @@ def diff(dst_path: str, pairings: List[nx.DiGraph]) -> None:
         dst_bv.save(output_bndb)
 
 
-def get_min_pair(function: nx.DiGraph, pairings: List[nx.DiGraph]) -> nx.DiGraph:
+def get_min_pair(function: nx.DiGraph, pairings: List[nx.DiGraph]) -> Tuple[nx.DiGraph, float]:
     min_distance = math.inf
     min_pairing = None
 
     for pairing in pairings:
         distance = function_difference(function, pairing)
-        # TODO: add threshold
-        if distance < min_distance:
+        # only accept pairings "close" to the original (accounting for function size)
+        if (distance < min_distance) and \
+                (distance < 0.25 * (function.number_of_nodes() + .1 * function.number_of_edges())):
             min_distance = distance
             min_pairing = pairing
 
-    return min_pairing
+    return min_pairing, min_distance
 
 
 def function_difference(f1: nx.DiGraph, f2: nx.DiGraph) -> float:
@@ -135,12 +142,18 @@ if __name__ == '__main__':
     # compute function and basic block hashes for the source binary
     bv = binja.BinaryViewType.get_view_of_file(args.src)
     functions = []
+
+    print('Ingesting {}...'.format(args.src))
     # TODO: exclude thunks/etc.
     for function in bv.functions:
+        # ignore small functions to avoid false positives
+        if len(function.basic_blocks) < 5:
+            continue
+
         hash_cfg = function_graph(bv, function.hlil)
         functions.append(hash_cfg)
 
-    print('{} ingested...'.format(args.src))
+
 
     print('Starting diffing...')
     diff(args.dst, functions)
