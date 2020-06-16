@@ -5,6 +5,7 @@ import binaryninja as binja
 from typing import Dict
 import numpy as np
 import hashlib
+import re
 
 # type aliases
 Function = binja.function.Function
@@ -144,11 +145,20 @@ def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
     if not bb.is_il:
         bb = bb.function.hlil.basic_blocks[bb.index]
 
-    # TODO: filter out addresses/unnamed functions/GOTOs
     disassembly_text = ''.join([str(instr.operation) for instr in bb])
+
+    # substitute out names tainted by addresses/etc.
+    function_pattern = 'sub_[0-9, a-z]{6}'
+    data_pattern = 'data_[0-9, a-z]{6}'
+    label_pattern = 'label_[0-9, a-z]{6}'
+
+    re.sub(function_pattern, 'function', disassembly_text)
+    re.sub(data_pattern, 'data', disassembly_text)
+    re.sub(label_pattern, 'label', disassembly_text)
 
     anchors = []
     for instr in bb:
+        # TODO: construct disassembly_text inside existing bb loop here
         if instr.operation == binja.HighLevelILOperation.HLIL_ASSIGN:
             src = instr.src
 

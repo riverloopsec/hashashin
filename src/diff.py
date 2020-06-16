@@ -153,7 +153,5 @@ if __name__ == '__main__':
         hash_cfg = function_graph(bv, function.hlil)
         functions.append(hash_cfg)
 
-
-
     print('Starting diffing...')
     diff(args.dst, functions)
