@@ -91,7 +91,7 @@ def get_min_pair(function: nx.DiGraph, pairings: List[nx.DiGraph]) -> Tuple[nx.D
         distance = function_difference(function, pairing)
         # only accept pairings "close" to the original (accounting for function size)
         if (distance < min_distance) and \
-                (distance < 0.25 * (function.number_of_nodes() + .1 * function.number_of_edges())):
+                (distance < 0.40 * (function.number_of_nodes() + .1 * function.number_of_edges())):
             min_distance = distance
             min_pairing = pairing
 
