@@ -39,8 +39,12 @@ def diff(dst_path: str, pairings: List[nx.DiGraph]) -> None:
             tag = function.create_tag(new_function_tt, 'New function')
             function.add_user_address_tag(function.start, tag)
 
-            for bb in function:
-                bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
+            for bb in function.hlil:
+                for instr in bb:
+                    function.set_user_instr_highlight(
+                        instr.address,
+                        binja.highlight.HighlightStandardColor.RedHighlightColor
+                    )
             continue
 
         if distance > 0:
@@ -52,15 +56,22 @@ def diff(dst_path: str, pairings: List[nx.DiGraph]) -> None:
 
             # basic block matches a block in the source
             if min_pairing.has_node(bb_hash):
-                bb.set_user_highlight(binja.highlight.HighlightStandardColor.GreenHighlightColor)
+                for instr in bb:
+                    function.set_user_instr_highlight(
+                        instr.address,
+                        binja.highlight.HighlightStandardColor.GreenHighlightColor
+                    )
 
             # basic block differs, but function is similar
             else:
                 print('tagging mismatch at {}...'.format(hex(bb.start)))
                 tag = function.create_tag(mismatched_tt, '')
                 function.add_user_address_tag(bb.start, tag)
-                bb.set_user_highlight(binja.highlight.HighlightStandardColor.RedHighlightColor)
-
+                for instr in bb:
+                    function.set_user_instr_highlight(
+                        instr.address,
+                        binja.highlight.HighlightStandardColor.RedHighlightColor
+                    )
 
     output_bndb = os.path.join(os.getcwd(), dst_path + '.bndb')
     print("Writing output Binary Ninja database at {}".format(output_bndb))
