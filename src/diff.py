@@ -64,9 +64,9 @@ def diff(dst_path: str, pairings: List[nx.DiGraph]) -> None:
 
             # basic block differs, but function is similar
             else:
-                print('tagging mismatch at {}...'.format(hex(bb.start)))
+                print('tagging mismatch at {}...'.format(hex(bb.start + function.start)))
                 tag = function.create_tag(mismatched_tt, '')
-                function.add_user_address_tag(bb.start, tag)
+                function.add_user_address_tag(bb.start + function.start, tag)
                 for instr in bb:
                     function.set_user_instr_highlight(
                         instr.address,
