@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 ## Hashashin: A Fuzzy Matching Tool for Binary Ninja
 
 This tool detects similar functions between binaries, and ports annotations (currently only in the form of tags)
@@ -112,4 +111,3 @@ For example, `/src/generate_signatures.py tests/test1_annotated.bndb test1_annot
 
 This will output to a file at the same path as the `input_binary` with `.bndb` appended,
  which is the annotated Binary Ninja database as a result of applying signatures.
->>>>>>> master
