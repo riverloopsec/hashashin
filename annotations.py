@@ -23,13 +23,19 @@ class Annotations:
             function_tags = function.address_tags
 
             for _, addr, label in function_tags:
-                bb = bv.get_basic_blocks_at(addr)[0]
-                bb_hash = brittle_hash(bv, bb)
+                llil_instr = function.get_low_level_il_at(addr)
+                hlil_instr = llil_instr.hlil
 
-                # initialize tag mapping if it does not already exist
-                if bb_hash not in self.tagged_dict.keys():
-                    self.tagged_dict[bb_hash] = {}
-                self.tagged_dict[bb_hash][label.type.name] = label.data
+                if hlil_instr is None:
+                    continue
+                hlil_bb = llil_instr.hlil.il_basic_block
+
+                bb_hash = brittle_hash(bv, hlil_bb)
+                if bb_hash is not None:
+                    # initialize tag mapping if it does not already exist
+                    if bb_hash not in self.tagged_dict.keys():
+                        self.tagged_dict[bb_hash] = {}
+                    self.tagged_dict[bb_hash][label.type.name] = label.data
 
         elif raw_data is not None:
             self.decode(raw_data)
