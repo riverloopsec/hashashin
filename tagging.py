@@ -3,7 +3,7 @@
 
 import binaryninja as binja
 from .annotations import Annotations
-from hashashin.lsh import brittle_hash
+from .lsh import brittle_hash
 from typing import Dict
 
 # type aliases
