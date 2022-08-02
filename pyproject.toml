@@ -1,0 +1,17 @@
+[build-system]
+requires = [ "setuptools>=41", "wheel", "setuptools-git-versioning", ]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools-git-versioning]
+enabled = true
+
+[project]
+name = "hashashin"
+description = "A binary hashing framework built on Binary Ninja's IL stack"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {file = "LICENSE"}
+dependencies = [
+    "numpy",
+]
+dynamic = ["version"]
