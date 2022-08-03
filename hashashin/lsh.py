@@ -2,7 +2,7 @@
 # Author Rylan O'Connell
 
 import binaryninja as binja
-from typing import Dict
+from typing import Dict, Optional
 import numpy as np
 import hashlib
 import re
@@ -58,7 +58,7 @@ def hash_function(function: Function) -> str:
     # generate vectors for each basic block
     bb_hashes = {}
     for bb in function.mlil:
-        bb_hashes[bb] = bucket(vectorize(bb), h_planes)
+        bb_hashes[bb] = hash_basic_block(bb)
     return weisfeiler_lehman(bb_hashes)
 
 
@@ -99,6 +99,23 @@ def weisfeiler_lehman(bbs: Dict[Basic_Block, int], iterations: int = 1) -> str:
     return m.digest().hex()
 
 
+def hash_basic_block(bb: Basic_Block, h_planes: Optional[Vector] = None) -> str:
+    """
+    Wrapper function to generate a fuzzy hash for a basic block
+
+    :param bb: the basic block to hash
+    :param h_planes: a numpy array of hyperplanes (if none are provided the default values will be used)
+    :return: a string representing a fuzzy hash of the basic block
+    """
+    if not bb.is_il:
+        index = bb.index
+        bb = bb.function.mlil.basic_blocks[index]
+
+    if h_planes is None:
+        h_planes = gen_planes()
+    return bucket(vectorize(bb), h_planes)
+
+
 def bucket(vector: Vector, h_planes: Vector) -> str:
     """
     Encode a vector's position relative to each hyper plane such that similar vectors will land in the same "bucket".
@@ -108,7 +125,7 @@ def bucket(vector: Vector, h_planes: Vector) -> str:
     :return: a hex string representing the "bucket" the given vector lands in
     """
     bools = [str(int(np.dot(vector, h_plane) > 0)) for h_plane in h_planes]
-    return hex(int(''.join(bools), 2))
+    return hex(int(''.join(bools), 2))[2:]
 
 
 def gen_planes(num_planes: int = 100) -> Vector:
@@ -120,7 +137,7 @@ def gen_planes(num_planes: int = 100) -> Vector:
     """
     # TODO: look into alternate (deterministic) methods of generating uniformly distributed hyperplanes
     h_planes = np.array([[(-1 ^ int((i * j) / 2)) * (i ^ j) % (int(i / (j + 1)) + 1)
-                        for j in range(len(binja.MediumLevelILOperation.__members__))]
+                          for j in range(len(binja.MediumLevelILOperation.__members__))]
                          for i in range(num_planes)])
 
     return h_planes

@@ -32,7 +32,6 @@ To install Hashashin as a library, simply run `pip install .` from within the ro
 >>> import hashashin
 >>> import binaryninja
 >>> bv = binaryninja.open_view('test')
->>> f = bv.get_functions_by_name('main')[0]
 >>> hashashin.hash_all(bv)
 {
   '86ae180a048a9ed02b0f2413bb0d736fb372233fc93237f73f6fc4f17af696cc': <func: x86_64@0x630>, 
@@ -40,4 +39,15 @@ To install Hashashin as a library, simply run `pip install .` from within the ro
   'd3fe3a0e5dfacf36664a3c8478a50fb4f1aee744a9d9d839f65c86c7d91567d4': <func: x86_64@0x666>, 
   ...
 }
+```
+
+#### Hash basic block
+```python
+>>> import hashashin
+>>> import binaryninja
+>>> bv = binaryninja.open_view('test')
+>>> f = bv.get_functions_by_name('main')[0]
+>>> bb = f.basic_blocks[0]
+>>> hashashin.hash_basic_block(bb)
+'2e196bef7f9beffa99ffbf'
 ```
