@@ -1,114 +1,53 @@
-## Hashashin: A Fuzzy Matching Tool for Binary Ninja
-
-This tool detects similar functions between binaries, and ports annotations (currently only in the form of tags)
- for matching basic blocks.
+## Hashashin: A Fuzzy Matching Library for Binary Ninja
 
 ### Setup
+#### Prerequisites
+A valid binary ninja license is required to use this library - please ensure Binary Ninja is installed and that the Python
+API is available.
 
-#### Installation in Docker
+To install the Binary Ninja API, run the `install-api.py` script located in the the Binary Ninja installationation
+directory:
+- MacOS - `/Applications/Binary\ Ninja.app/Contents/Resources/scripts/install-api.py`
+- Windows - `C:\Program Files\Vector35\BinaryNinja\scripts\install-api.py`
+- Linux - May be in `/opt/binaryninja/scripts/install-api.py`
 
-Pre-requisites:
-- Download a Linux version of [Binary Ninja](https://binary.ninja/) (commercial or headless) `BinaryNinja.zip` from Vector35 and place at `third-party/binaryninja/BinaryNinja.zip`
-- Place your license file at `third-party/binaryninja/license.dat`
-
-Then, build the provided Docker containers as described here:
-```bash
-docker build -t safedocs/base/static-light -f Dockerfile.base .
-docker build -t safedocs/hashashin:local -f Dockerfile.dev .
-```
-
-Due to how the Developer docker is setup below, your code changes will sync into it and
- you do not need to rebuild unless dependencies change.
-Launch and enter the container:
-```bash
-docker run -it --rm -v"$(pwd):/processor" --name dev-hashashin safedocs/hashashin:local
-```
-
-#### Installation Locally
-
-The Docker method is supported to enable more consistent development envrionments.
-However, you should be able to run locally as long as the dependencies are installed:
-- BinaryNinja headless
-- Python numpy
+#### Installation
+To install Hashashin as a library, simply run `pip install .` from within the root of this repository.
 
 
 ### Usage
 
-### Generate Signatures
+#### Hash a single function  
 
-Provide a Binary Ninja database with tags applied to it which you want to identify.
-
-```bash
-/src/generate_signatures.py <input_bndb> <signature_file>
+```python
+>>> import hashashin
+>>> import binaryninja
+>>> bv = binaryninja.open_view('test')
+>>> f = bv.get_functions_by_name('main')[0]
+>>> hashashin.hash_function(f)
+'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+```
+#### Hash all functions in a binary
+```python
+>>> import hashashin
+>>> import binaryninja
+>>> bv = binaryninja.open_view('test')
+>>> hashashin.hash_all(bv)
+{
+  '86ae180a048a9ed02b0f2413bb0d736fb372233fc93237f73f6fc4f17af696cc': <func: x86_64@0x630>, 
+  'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855': <func: x86_64@0x974>, 
+  'd3fe3a0e5dfacf36664a3c8478a50fb4f1aee744a9d9d839f65c86c7d91567d4': <func: x86_64@0x666>, 
+  ...
+}
 ```
 
-For example, `/src/generate_signatures.py tests/test1_annotated.bndb test1_annotated.sig`.
-
-> NOTE: On sizeable files with many functions, this process will take time.
-
-### Apply Signatures
-
-```bash
-/src/apply_signatures.py <input_binary> <signature_file>
+#### Hash basic block
+```python
+>>> import hashashin
+>>> import binaryninja
+>>> bv = binaryninja.open_view('test')
+>>> f = bv.get_functions_by_name('main')[0]
+>>> bb = f.basic_blocks[0]
+>>> hashashin.hash_basic_block(bb)
+'2e196bef7f9beffa99ffbf'
 ```
-
-This will output to a file at the same path as the `input_binary` with `.bndb` appended,  which is the annotated Binary Ninja database as a result of applying signatures.
-
-
-=======
-## Hashashin: A Fuzzy Matching Tool for Binary Ninja
-
-This tool detects similar functions between binaries, and ports annotations (currently only in the form of tags)
- for matching basic blocks.
-
-### Setup
-
-#### Installation in Docker
-
-Pre-requisites:
-- Download a Linux version of [Binary Ninja](https://binary.ninja/) (commercial or headless) `BinaryNinja.zip` from Vector35 and place at `third-party/binaryninja/BinaryNinja.zip`
-- Place your license file at `third-party/binaryninja/license.dat`
-
-Then, build the provided Docker containers as described here:
-```bash
-docker build -t safedocs/base/static-light -f Dockerfile.base .
-docker build -t safedocs/hashashin:local -f Dockerfile.dev .
-```
-
-Due to how the Developer docker is setup below, your code changes will sync into it and
- you do not need to rebuild unless dependencies change.
-Launch and enter the container:
-```bash
-docker run -it --rm -v"$(pwd):/processor" --name dev-hashashin safedocs/hashashin:local
-```
-
-#### Installation Locally
-
-The Docker method is supported to enable more consistent development envrionments.
-However, you should be able to run locally as long as the dependencies are installed:
-- BinaryNinja headless
-- Python numpy
-
-
-### Usage
-
-### Generate Signatures
-
-Provide a Binary Ninja database with tags applied to it which you want to identify.
-
-```bash
-/src/generate_signatures.py <input_bndb> <signature_file>
-```
-
-For example, `/src/generate_signatures.py tests/test1_annotated.bndb test1_annotated.sig`.
-
-> NOTE: On sizeable files with many functions, this process will take time.
-
-### Apply Signatures
-
-```bash
-/src/apply_signatures.py <input_binary> <signature_file>
-```
-
-This will output to a file at the same path as the `input_binary` with `.bndb` appended,
- which is the annotated Binary Ninja database as a result of applying signatures.
