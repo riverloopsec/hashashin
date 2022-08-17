@@ -45,8 +45,11 @@ def hash_all(bv: Binary_View, return_serializable: bool = False, show_progress: 
     sigs = {}
     h_planes = gen_planes()
     for function in tqdm(bv.functions, disable=not show_progress):
-        sigs[hash_function(function, h_planes)] = function
-    return sigs if not return_serializable else {f2str(v): k for k, v in sigs.items()}
+        if return_serializable:
+            sigs[f2str(function)] = hash_function(function, h_planes)
+        else:
+            sigs[hash_function(function, h_planes)] = function
+    return sigs
 
 
 def hash_function(function: Function, h_planes: Optional[Vector] = None) -> str:
