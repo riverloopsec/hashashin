@@ -6,12 +6,15 @@ from typing import Dict, Optional
 import numpy as np
 import hashlib
 import re
+from tqdm import tqdm
 
 # type aliases
 Function = binja.function.Function
 Basic_Block = binja.basicblock.BasicBlock
 Binary_View = binja.binaryview.BinaryView
 Vector = np.ndarray
+
+f2str = lambda f: f'{f} @ 0x{f.start:X}'
 
 
 def hash_tagged(bv: Binary_View) -> Dict[str, Function]:
@@ -22,27 +25,31 @@ def hash_tagged(bv: Binary_View) -> Dict[str, Function]:
     :return: a dictionary mapping hashes to functions
     """
     sigs = {}
+    h_planes = gen_planes()
     for function in bv.functions:
         if len(function.address_tags) == 0:
             continue
-        sigs[hash_function(function)] = function
+        sigs[hash_function(function, h_planes)] = function
     return sigs
 
 
-def hash_all(bv: Binary_View) -> Dict[str, Function]:
+def hash_all(bv: Binary_View, return_serializable: bool = False, show_progress: bool = False) -> Dict[str, Function]:
     """
     Iterate over every function in the binary and calculate its hash.
 
     :param bv: binary view encapsulating the binary
+    :param return_serializable: if true, return a serializable dictionary mapping function name and address to hash
+    :param show_progress: if true, show a progress bar while hashing functions
     :return: a dictionary mapping hashes to functions
     """
     sigs = {}
-    for function in bv.functions:
-        sigs[hash_function(function)] = function
-    return sigs
+    h_planes = gen_planes()
+    for function in tqdm(bv.functions, disable=not show_progress):
+        sigs[hash_function(function, h_planes)] = function
+    return sigs if not return_serializable else {f2str(v): k for k, v in sigs.items()}
 
 
-def hash_function(function: Function) -> str:
+def hash_function(function: Function, h_planes: Optional[Vector] = None) -> str:
     """
     Hash a given function by "bucketing" basic blocks to capture a high level overview of their functionality, then
     performing a variation of the Weisfeiler Lehman graph similarity test on the labeled CFG.
@@ -50,15 +57,16 @@ def hash_function(function: Function) -> str:
     https://towardsdatascience.com/locality-sensitive-hashing-for-music-search-f2f1940ace23.
 
     :param function: the function to hash
+    :param h_planes: a numpy array of hyperplanes (if none are provided the default values will be used)
     :return: a deterministic hash of the function
     """
     # generate hyper planes to (roughly) evenly split all vectors
-    h_planes = gen_planes()
+    h_planes = gen_planes() if h_planes is None else h_planes
 
     # generate vectors for each basic block
     bb_hashes = {}
     for bb in function.mlil:
-        bb_hashes[bb] = hash_basic_block(bb)
+        bb_hashes[bb] = hash_basic_block(bb, h_planes)
     return weisfeiler_lehman(bb_hashes)
 
 
