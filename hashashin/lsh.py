@@ -14,35 +14,43 @@ Binary_View = binja.binaryview.BinaryView
 Vector = np.ndarray
 
 
-def hash_tagged(bv: Binary_View) -> Dict[str, Function]:
+def hash_tagged(bv: Binary_View, h_planes: Optional[Vector] = None) -> Dict[str, Function]:
     """
     Iterate over tagged functions in the binary and calculate their hash.
 
     :param bv: binary view encapsulating the binary
+    :param h_planes: a numpy array of hyperplanes used to bucket basic blocks
     :return: a dictionary mapping hashes to functions
     """
+    if h_planes is None:
+        h_planes = gen_planes()
+
     sigs = {}
     for function in bv.functions:
         if len(function.address_tags) == 0:
             continue
-        sigs[hash_function(function)] = function
+        sigs[hash_function(function, h_planes)] = function
     return sigs
 
 
-def hash_all(bv: Binary_View) -> Dict[str, Function]:
+def hash_all(bv: Binary_View, h_planes: Optional[Vector] = None) -> Dict[str, Function]:
     """
     Iterate over every function in the binary and calculate its hash.
 
     :param bv: binary view encapsulating the binary
+    :param h_planes: a numpy array of hyperplanes used to bucket basic blocks
     :return: a dictionary mapping hashes to functions
     """
+    if h_planes is None:
+        h_planes = gen_planes()
+
     sigs = {}
     for function in bv.functions:
-        sigs[hash_function(function)] = function
+        sigs[hash_function(function, h_planes)] = function
     return sigs
 
 
-def hash_function(function: Function) -> str:
+def hash_function(function: Function, h_planes: Optional[Vector] = None) -> str:
     """
     Hash a given function by "bucketing" basic blocks to capture a high level overview of their functionality, then
     performing a variation of the Weisfeiler Lehman graph similarity test on the labeled CFG.
@@ -50,15 +58,17 @@ def hash_function(function: Function) -> str:
     https://towardsdatascience.com/locality-sensitive-hashing-for-music-search-f2f1940ace23.
 
     :param function: the function to hash
+    :param h_planes: a numpy array of hyperplanes used to bucket basic blocks
     :return: a deterministic hash of the function
     """
     # generate hyper planes to (roughly) evenly split all vectors
-    h_planes = gen_planes()
+    if h_planes is None:
+        h_planes = gen_planes()
 
     # generate vectors for each basic block
     bb_hashes = {}
     for bb in function.mlil:
-        bb_hashes[bb] = hash_basic_block(bb)
+        bb_hashes[bb] = hash_basic_block(bb, h_planes)
     return weisfeiler_lehman(bb_hashes)
 
 
