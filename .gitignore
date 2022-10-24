@@ -1,6 +1,11 @@
 third-party/binaryninja/BinaryNinja.zip
 third-party/binaryninja/license.dat
 
+binary_data/
+fuzzy_hashing_papers/
+profile_code.py
+.gitignore
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

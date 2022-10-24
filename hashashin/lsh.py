@@ -2,28 +2,29 @@
 # Author Rylan O'Connell
 
 import binaryninja as binja
-from typing import Dict, Optional
+from binaryninja import Function, BasicBlockList, BasicBlock, BinaryView
+from hashashin.utils import vec2hex
+from typing import Dict, Optional, Callable, Tuple, Union
 import numpy as np
 import hashlib
 import re
 from tqdm import tqdm
 
-# type aliases
-Function = binja.function.Function
-Basic_Block = binja.basicblock.BasicBlock
-Binary_View = binja.binaryview.BinaryView
-Vector = np.ndarray
+from hashashin.utils import get_cyclomatic_complexity, get_constants, get_strings, write_hash
 
-f2str = lambda f: f'{f} @ 0x{f.start:X}'
+FUNC_TO_STR: Callable[[Function], str] = lambda f: f"{f} @ 0x{f.start:X}"
+STRING_MAP = None
+SIGNATURE_LEN = 20
 
 
-def hash_tagged(bv: Binary_View) -> Dict[str, Function]:
+def hash_tagged(bv: BinaryView) -> Dict[str, Function]:
     """
     Iterate over tagged functions in the binary and calculate their hash.
 
     :param bv: binary view encapsulating the binary
     :return: a dictionary mapping hashes to functions
     """
+    raise NotImplementedError()
     sigs = {}
     h_planes = gen_planes()
     for function in bv.functions:
@@ -33,47 +34,126 @@ def hash_tagged(bv: Binary_View) -> Dict[str, Function]:
     return sigs
 
 
-def hash_all(bv: Binary_View, return_serializable: bool = False, show_progress: bool = False) -> Dict[str, Function]:
+def hash_all(
+    bv: BinaryView,
+    return_serializable: bool = False,
+    show_progress: bool = False,
+    save_to_file: bool = False,
+) -> Tuple[str, Dict[Union[Function, str], str]]:
     """
     Iterate over every function in the binary and calculate its hash.
 
     :param bv: binary view encapsulating the binary
     :param return_serializable: if true, return a serializable dictionary mapping function name and address to hash
     :param show_progress: if true, show a progress bar while hashing functions
-    :return: a dictionary mapping hashes to functions
+    :param save_to_file: if true, save the hashes to a file
+    :return: a dictionary mapping signatures to sets of functions and a dictionary mapping functions to feature maps
     """
-    sigs = {}
-    h_planes = gen_planes()
+    global STRING_MAP
+    STRING_MAP = get_strings(bv)
+    features = {}
+    h_planes = None  # gen_planes()
     for function in tqdm(bv.functions, disable=not show_progress):
-        if return_serializable:
-            sigs[f2str(function)] = hash_function(function, h_planes)
-        else:
-            sigs[hash_function(function, h_planes)] = function
-    return sigs
+        feature = hash_function(function, h_planes, string_map=STRING_MAP)
+        features[function] = feature
+    signature = min_hash(np.stack(features.values()))
+    if return_serializable:
+        features = {FUNC_TO_STR(f): vec2hex(v) for f, v in features.items()}
+    if save_to_file:
+        write_hash(bv.file.filename, signature, features)
+    return signature, features
 
 
-def hash_function(function: Function, h_planes: Optional[Vector] = None) -> str:
+def min_hash(features: np.ndarray, sig_len: int = SIGNATURE_LEN, seed: int = 2022) -> str:
+    """
+    Generate a minhash signature for a given set of features.
+
+    :param features: a matrix of vectorized features
+    :param sig_len: the length of the minhash signature
+    :param seed: a seed for the random number generator
+    :return: a string representing the minhash signature
+    """
+    np.random.seed(seed)
+    # h(x) = (ax + b) % c
+    a = np.random.randint(0, 2**32 - 1, size=sig_len)
+    b = np.random.randint(0, 2**32 - 1, size=sig_len)
+    c = 4297922131  # prime number above 2**32-1
+
+    b = np.stack([np.stack([b] * features.shape[0])] * features.shape[1]).T
+    hashed_features = (np.tensordot(a, features, axes=0) + b) % c
+    minhash = hashed_features.min(axis=(1, 2))
+    return vec2hex(minhash)
+
+
+def hash_function(
+    function: Function, h_planes: Optional[np.ndarray] = None, string_map=STRING_MAP
+) -> np.ndarray:
     """
     Hash a given function by "bucketing" basic blocks to capture a high level overview of their functionality, then
     performing a variation of the Weisfeiler Lehman graph similarity test on the labeled CFG.
     For more information on this process, see
     https://towardsdatascience.com/locality-sensitive-hashing-for-music-search-f2f1940ace23.
 
+    :param string_map: a dictionary of strings in each function
     :param function: the function to hash
     :param h_planes: a numpy array of hyperplanes (if none are provided the default values will be used)
     :return: a deterministic hash of the function
     """
-    # generate hyper planes to (roughly) evenly split all vectors
-    h_planes = gen_planes() if h_planes is None else h_planes
-
-    # generate vectors for each basic block
-    bb_hashes = {}
-    for bb in function.mlil:
-        bb_hashes[bb] = hash_basic_block(bb, h_planes)
-    return weisfeiler_lehman(bb_hashes)
+    if not string_map:
+        string_map = get_strings(function.view)
+    features = extract_features(function, string_map=string_map)
+    return features
 
 
-def weisfeiler_lehman(bbs: Dict[Basic_Block, int], iterations: int = 1) -> str:
+def extract_features(function: Function, string_map=STRING_MAP) -> np.ndarray[int, ...]:
+    """
+    Extract features from a function to be used in the hashing process.
+    This includes ideas from https://docs.google.com/document/d/1ZphECbrEUTw4WNepQQ2KrABll0JXHUjElEfXVjbV4Jg/edit
+
+    :param string_map: dictionary of strings in each function
+    :param function: the function to extract features from
+    :return: a vector representing the function's features (np.int32, 1xN)
+    """
+    if not string_map:
+        string_map = get_strings(function.view)
+    strings = string_map[function.start]
+    features = np.zeros(4 + 64 + 512, dtype=np.uint32)
+
+    offset = 0
+    features[offset] = get_cyclomatic_complexity(function)
+    offset += 1
+    features[offset] = len(list(function.instructions))
+    offset += 1
+    features[offset] = len(strings)  # number of strings
+    offset += 1
+    features[offset] = (
+        len(max(strings, key=len)) if strings else 0
+    )  # maximum string length
+    offset += 1
+
+    constants = get_constants(function)
+    constants = np.array(sorted([c.value for c in constants]), dtype=np.int32)
+    if len(constants) > 64:
+        constants = constants[:64]
+    features[offset : offset + 64] = np.pad(
+        constants, (0, 64 - len(constants)), "constant", constant_values=0
+    )
+    offset += 64
+
+    # add first 512 bytes of strings
+    strings = "".join(strings)
+    if len(strings) > 512:
+        strings = strings[:512]
+    strings = np.frombuffer(strings.encode("utf-8"), dtype=np.byte)
+    features[offset: offset + 512] = np.pad(
+        strings, (0, 512 - len(strings)), "constant", constant_values=0
+    )
+    offset += 512
+
+    return features
+
+
+def weisfeiler_lehman(bbs: Dict[BasicBlock, int], iterations: int = 1) -> str:
     """
     Hash each function using a variation of the Weisfeiler-Lehman kernel.
     This allows us to account for not only the contents of each basic block, but also the overall "structure" of the CFG
@@ -90,7 +170,7 @@ def weisfeiler_lehman(bbs: Dict[Basic_Block, int], iterations: int = 1) -> str:
     new_labels = {}
     for _ in range(iterations):
         for bb in bbs:
-            new_labels[bb] = ''
+            new_labels[bb] = ""
             incoming_bbs = [edge.source for edge in bb.incoming_edges]
             outgoing_bbs = [edge.target for edge in bb.outgoing_edges]
 
@@ -104,13 +184,13 @@ def weisfeiler_lehman(bbs: Dict[Basic_Block, int], iterations: int = 1) -> str:
 
     # The set of labels associated with each basic block now captures the relationship between basic blocks in the CFG,
     # however, a function with many CFGs will have a very long set of labels. Hash this list again for hash consistency
-    long_hash = ''.join(sorted(new_labels.values()))
+    long_hash = "".join(sorted(new_labels.values()))
     m = hashlib.sha256()
-    m.update(long_hash.encode('utf-8'))
+    m.update(long_hash.encode("utf-8"))
     return m.digest().hex()
 
 
-def hash_basic_block(bb: Basic_Block, h_planes: Optional[Vector] = None) -> str:
+def hash_basic_block(bb: BasicBlock, h_planes: Optional[np.ndarray] = None) -> str:
     """
     Wrapper function to generate a fuzzy hash for a basic block
 
@@ -127,7 +207,7 @@ def hash_basic_block(bb: Basic_Block, h_planes: Optional[Vector] = None) -> str:
     return bucket(vectorize(bb), h_planes)
 
 
-def bucket(vector: Vector, h_planes: Vector) -> str:
+def bucket(vector: np.ndarray, h_planes: np.ndarray) -> str:
     """
     Encode a vector's position relative to each hyper plane such that similar vectors will land in the same "bucket".
 
@@ -136,10 +216,10 @@ def bucket(vector: Vector, h_planes: Vector) -> str:
     :return: a hex string representing the "bucket" the given vector lands in
     """
     bools = [str(int(np.dot(vector, h_plane) > 0)) for h_plane in h_planes]
-    return hex(int(''.join(bools), 2))[2:]
+    return hex(int("".join(bools), 2))[2:]
 
 
-def gen_planes(num_planes: int = 100) -> Vector:
+def gen_planes(num_planes: int = 100) -> np.ndarray:
     """
     Generates a series of arbitrary hyper planes to be used for "bucketing" in our LSH.
 
@@ -147,14 +227,20 @@ def gen_planes(num_planes: int = 100) -> Vector:
     :return: a numpy array containing num_planes pythonic arrays
     """
     # TODO: look into alternate (deterministic) methods of generating uniformly distributed hyperplanes
-    h_planes = np.array([[(-1 ^ int((i * j) / 2)) * (i ^ j) % (int(i / (j + 1)) + 1)
-                          for j in range(len(binja.MediumLevelILOperation.__members__))]
-                         for i in range(num_planes)])
+    h_planes = np.array(
+        [
+            [
+                (-1 ^ int((i * j) / 2)) * (i ^ j) % (int(i / (j + 1)) + 1)
+                for j in range(len(binja.MediumLevelILOperation.__members__))
+            ]
+            for i in range(num_planes)
+        ]
+    )
 
     return h_planes
 
 
-def vectorize(bb: Basic_Block) -> Vector:
+def vectorize(bb: BasicBlock) -> np.ndarray:
     """
     Converts a basic block into a vector representing the number of occurrences of each "type" of MLIL instruction,
     effectively forming a "bag of words".
@@ -162,27 +248,29 @@ def vectorize(bb: Basic_Block) -> Vector:
     :param bb: the basic block to construct a vector representation of
     :return: a numpy array representing the number of occurrences of each MLIL instruction type
     """
-    vector = dict((key, 0) for key in range(len(binja.MediumLevelILOperation.__members__)))
+    vector = dict(
+        (key, 0) for key in range(len(binja.MediumLevelILOperation.__members__))
+    )
     for instr in bb:
         vector[instr.operation.value] += 1
     return np.fromiter(vector.values(), dtype=int)
 
 
-def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
+def brittle_hash(bv: BinaryView, bb: BasicBlock) -> str:
     # operands are only available on an IL, ensure we're working with one
     if bb is None or not bb.is_il:
         return
 
-    disassembly_text = ''.join([str(instr.operation) for instr in bb])
+    disassembly_text = "".join([str(instr.operation) for instr in bb])
 
     # substitute out names tainted by addresses/etc.
-    function_pattern = 'sub_[0-9, a-z]{6}'
-    data_pattern = 'data_[0-9, a-z]{6}'
-    label_pattern = 'label_[0-9, a-z]{6}'
+    function_pattern = "sub_[0-9, a-z]{6}"
+    data_pattern = "data_[0-9, a-z]{6}"
+    label_pattern = "label_[0-9, a-z]{6}"
 
-    re.sub(function_pattern, 'function', disassembly_text)
-    re.sub(data_pattern, 'data', disassembly_text)
-    re.sub(label_pattern, 'label', disassembly_text)
+    re.sub(function_pattern, "function", disassembly_text)
+    re.sub(data_pattern, "data", disassembly_text)
+    re.sub(label_pattern, "label", disassembly_text)
 
     anchors = []
     for instr in bb:
@@ -220,8 +308,8 @@ def brittle_hash(bv: Binary_View, bb: Basic_Block) -> str:
 
     # sort anchors to guarantee consistency
     anchors.sort()
-    anchor_text = ''.join(anchors)
+    anchor_text = "".join(anchors)
     disassembly_text += anchor_text
     m = hashlib.sha256()
-    m.update(disassembly_text.encode('utf-8'))
+    m.update(disassembly_text.encode("utf-8"))
     return m.digest().hex()
