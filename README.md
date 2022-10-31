@@ -1,5 +1,7 @@
 ## Hashashin: A Fuzzy Matching Library for Binary Ninja
 
+*NOTE: This readme may be out of date with regards to changes on the develop branch. The platform currently does not support hashing basic blocks.* 
+
 ### Setup
 #### Prerequisites
 A valid binary ninja license is required to use this library - please ensure Binary Ninja is installed and that the Python
