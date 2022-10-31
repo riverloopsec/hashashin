@@ -10,10 +10,15 @@ import hashlib
 import re
 from tqdm import tqdm
 
-from hashashin.utils import get_cyclomatic_complexity, get_constants, get_strings, write_hash
+from hashashin.utils import (
+    get_cyclomatic_complexity,
+    get_constants,
+    get_strings,
+    write_hash,
+    serialize_features,
+)
+import hashashin
 
-FUNC_TO_STR: Callable[[Function], str] = lambda f: f"{f} @ 0x{f.start:X}"
-STRING_MAP = None
 SIGNATURE_LEN = 20
 
 
@@ -39,7 +44,7 @@ def hash_all(
     return_serializable: bool = False,
     show_progress: bool = False,
     save_to_file: bool = False,
-) -> Tuple[str, Dict[Union[Function, str], str]]:
+) -> Tuple[str, Union[Dict[Function, np.ndarray], Dict[str, str]]]:
     """
     Iterate over every function in the binary and calculate its hash.
 
@@ -49,22 +54,28 @@ def hash_all(
     :param save_to_file: if true, save the hashes to a file
     :return: a dictionary mapping signatures to sets of functions and a dictionary mapping functions to feature maps
     """
-    global STRING_MAP
-    STRING_MAP = get_strings(bv)
+    string_map = get_strings(bv)
     features = {}
     h_planes = None  # gen_planes()
+    # baseline_sig, baseline_feats = hashashin.utils.load_hash(
+    #     bv.file.filename, deserialize=True, bv=bv
+    # )
     for function in tqdm(bv.functions, disable=not show_progress):
-        feature = hash_function(function, h_planes, string_map=STRING_MAP)
+        feature = hash_function(function, h_planes, string_map=string_map)
         features[function] = feature
+        # if vec2hex(features[function]) != vec2hex(baseline_feats[function]):
+        #     print("ok this is the problem")
     signature = min_hash(np.stack(features.values()))
     if return_serializable:
-        features = {FUNC_TO_STR(f): vec2hex(v) for f, v in features.items()}
+        features = serialize_features(features)
     if save_to_file:
         write_hash(bv.file.filename, signature, features)
     return signature, features
 
 
-def min_hash(features: np.ndarray, sig_len: int = SIGNATURE_LEN, seed: int = 2022) -> str:
+def min_hash(
+    features: np.ndarray, sig_len: int = SIGNATURE_LEN, seed: int = 2022
+) -> str:
     """
     Generate a minhash signature for a given set of features.
 
@@ -86,7 +97,7 @@ def min_hash(features: np.ndarray, sig_len: int = SIGNATURE_LEN, seed: int = 202
 
 
 def hash_function(
-    function: Function, h_planes: Optional[np.ndarray] = None, string_map=STRING_MAP
+    function: Function, h_planes: Optional[np.ndarray] = None, string_map=None
 ) -> np.ndarray:
     """
     Hash a given function by "bucketing" basic blocks to capture a high level overview of their functionality, then
@@ -102,10 +113,14 @@ def hash_function(
     if not string_map:
         string_map = get_strings(function.view)
     features = extract_features(function, string_map=string_map)
+    # if function.start == 141836:
+    #     print('hey now')
+    # if function.start == 141836 and vec2hex(features) != '':
+    #     print('wtf')
     return features
 
 
-def extract_features(function: Function, string_map=STRING_MAP) -> np.ndarray[int, ...]:
+def extract_features(function: Function, string_map=None) -> np.ndarray[int, ...]:
     """
     Extract features from a function to be used in the hashing process.
     This includes ideas from https://docs.google.com/document/d/1ZphECbrEUTw4WNepQQ2KrABll0JXHUjElEfXVjbV4Jg/edit
@@ -116,7 +131,7 @@ def extract_features(function: Function, string_map=STRING_MAP) -> np.ndarray[in
     """
     if not string_map:
         string_map = get_strings(function.view)
-    strings = string_map[function.start]
+    strings = sorted(string_map[function.start])
     features = np.zeros(4 + 64 + 512, dtype=np.uint32)
 
     offset = 0
@@ -132,10 +147,10 @@ def extract_features(function: Function, string_map=STRING_MAP) -> np.ndarray[in
     offset += 1
 
     constants = get_constants(function)
-    constants = np.array(sorted([c.value for c in constants]), dtype=np.int32)
+    constants = np.array(sorted(constants), dtype=np.int32)
     if len(constants) > 64:
         constants = constants[:64]
-    features[offset : offset + 64] = np.pad(
+    features[offset: offset + 64] = np.pad(
         constants, (0, 64 - len(constants)), "constant", constant_values=0
     )
     offset += 64
