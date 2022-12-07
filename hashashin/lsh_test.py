@@ -24,7 +24,9 @@ BINARY_DIR = os.path.join(TEST_DIR, "binary_data")
 
 
 def get_binaries(path, bin_name=None, recursive=True, progress=False):
-    if bin_name is None:
+    if os.path.isfile(path):
+        files = [path]
+    elif bin_name is None:
         files = glob.glob(f"{path}/**", recursive=recursive)
     else:
         files = glob.glob(f"{path}/**/{bin_name}", recursive=recursive)
@@ -59,7 +61,21 @@ def compute_metrics(similarity_matrix):
     return precision, recall, f1
 
 
-def compute_matrices(base_binary, generate=True, regenerate=False, version_paths=None, hash_progress=False):
+def fmask(mask: slice, content: str):
+    '''Mask a feature string with a slice. Use step=1 to return the masked feature.'''
+    zeros = ['0'] * len(content)
+    _content = list(content)
+    invert = mask.step is not None
+    mask = slice(mask.start * 8, mask.stop * 8)
+    if invert:
+        zeros[mask] = _content[mask]
+        return ''.join(zeros)
+    else:
+        _content[mask] = zeros[mask]
+        return ''.join(_content)
+
+
+def compute_matrices(base_binary, generate=True, regenerate=False, version_paths=None, hash_progress=False, _feature_mask=None):
     if version_paths is None:
         version_paths = glob.glob(f"{BINARY_DIR}/{base_binary}/*[0-9].[0-9]*")
     elif isinstance(version_paths, str):
@@ -88,6 +104,9 @@ def compute_matrices(base_binary, generate=True, regenerate=False, version_paths
         b = f"{version_paths[1]}/{binaries[j]}"
         sig_a, feat_a = load_hash(a, generate=False, progress=False)
         sig_b, feat_b = load_hash(b, generate=False, progress=False)
+        if _feature_mask is not None:
+            feat_a = {k: fmask(_feature_mask, v) for k, v in feat_a.items()}
+            feat_b = {k: fmask(_feature_mask, v) for k, v in feat_b.items()}
         minhash_similarities[i, j] = minhash_similarity(sig_a, sig_b)
         jaccard_similarities[i, j] = jaccard_similarity(feat_a, feat_b)
     return minhash_similarities, jaccard_similarities, binaries
@@ -128,7 +147,7 @@ class TestCases(unittest.TestCase):
             return
         self.binary_path = f"{binary_dir}/{binary}"
         print(f"Binary Ninja loading {self.binary_path}...")
-        self.bv = binaryninja.open_view(self.binary_path)
+        self.bv = binaryninja.open_view(self.binary_path, options={"analysis.experimental.gratuitousFunctionUpdate": True})
 
     def test_vector_conversion(self):
         vec = np.random.randint(0, 2**32 - 1, 1000, dtype=np.uint32)
@@ -147,24 +166,27 @@ class TestCases(unittest.TestCase):
         self.runSetup("busybox")
         func = self.bv.get_functions_by_name("main")[0]
         feat = hashashin.hash_function(func)
+        print(features_to_dict(feat))
+        print(features_to_dict(dict_to_features(features_to_dict(feat))))
         self.assertTrue(all(feat == dict_to_features(features_to_dict(feat))))
 
     def test_get_constants(self):
         self.runSetup("busybox")
         function_addr = 0x7e1c4
+        binaryninja.open_view(self.binary_path, options={"analysis.experimental.gratuitousFunctionUpdate": True})
         f = self.bv.get_function_at(function_addr)
         constants = hashashin.get_constants(f)
-        # for _ in tqdm(range(10)):
-        #     _view = binaryninja.open_view(self.binary_path)
-        #     new_constants = hashashin.get_constants(_view.get_function_at(function_addr))
-        #     if constants != new_constants:
-        #         print("Constants changed between views")
-        #         hashashin.get_constants(_view.get_function_at(function_addr))
-        #     _view.update_analysis_and_wait()
-        #     new_constants = hashashin.get_constants(_view.get_function_at(function_addr))
-        #     if constants != new_constants:
-        #         print("Constants changed between views and analysis")
-        #         hashashin.get_constants(_view.get_function_at(function_addr))
+        for _ in tqdm(range(10)):
+            _view = binaryninja.open_view(self.binary_path, options={"analysis.experimental.gratuitousFunctionUpdate": True})
+            new_constants = hashashin.get_constants(_view.get_function_at(function_addr))
+            if constants != new_constants:
+                print("Constants changed between views")
+                hashashin.get_constants(_view.get_function_at(function_addr))
+            _view.update_analysis_and_wait()
+            new_constants = hashashin.get_constants(_view.get_function_at(function_addr))
+            if constants != new_constants:
+                print("Constants changed between views and analysis")
+                hashashin.get_constants(_view.get_function_at(function_addr))
         test = [
             constants
             == hashashin.get_constants(
@@ -179,7 +201,7 @@ class TestCases(unittest.TestCase):
     def test_echo_hash(self):
         self.runSetup("echo")
         sig, feats = hashashin.hash_all(self.bv, return_serializable=True)
-        stored_sig, stored_feats = load_hash(f"{BINARY_DIR}/echo", generate=False)
+        stored_sig, stored_feats = load_hash(f"{BINARY_DIR}/echo", generate=True)
         self.assertEqual(sig, stored_sig)
         self.assertDictEqual(feats, stored_feats)
 
@@ -240,6 +262,7 @@ class TestCases(unittest.TestCase):
         sig, feats = hashashin.hash_all(
             self.bv, return_serializable=False, show_progress=True
         )
+        self.runSetup("busybox")
         sig2, feats2 = hashashin.hash_all(
             self.bv, return_serializable=False, show_progress=True
         )
@@ -414,3 +437,24 @@ class TestCases(unittest.TestCase):
             f"Jaccard precision: {jaccard_metrics[0]}, recall: {jaccard_metrics[1]}, f1: {jaccard_metrics[2]}"
         )
         self.assertGreaterEqual(minhash_metrics[2], 0.9)
+
+    def test_zero_constants(self):
+        minhash_similarities, jaccard_similarities, binaries = compute_matrices("net-snmp", regenerate=False,
+                                                                                generate=False,
+                                                                                _feature_mask=slice(4, 68))
+        minhash_metrics = compute_metrics(minhash_similarities)
+        print(
+            f"Minhash precision: {minhash_metrics[0]}, recall: {minhash_metrics[1]}, f1: {minhash_metrics[2]}"
+        )
+        jaccard_metrics = compute_metrics(jaccard_similarities)
+        print(
+            f"Jaccard precision: {jaccard_metrics[0]}, recall: {jaccard_metrics[1]}, f1: {jaccard_metrics[2]}"
+        )
+
+    def test_split_large_int(self):
+        from hashashin.utils import split_int_to_uint32, merge_uint32_to_int
+        import random
+        x = random.randint(2 ** 128, 2 ** 129)
+        print(x, split_int_to_uint32(x))
+        y = merge_uint32_to_int(split_int_to_uint32(x))
+        self.assertEqual(x, y)
