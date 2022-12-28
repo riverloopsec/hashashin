@@ -3,12 +3,13 @@ import os
 import unittest
 
 import binaryninja
-import magic
 import numpy as np
 from tqdm import tqdm
 
 import hashashin
 from hashashin.utils import deserialize_features
+from hashashin.utils import dict_to_features
+from hashashin.utils import features_to_dict
 from hashashin.utils import func2str
 from hashashin.utils import hex2vec
 from hashashin.utils import jaccard_similarity
@@ -16,26 +17,10 @@ from hashashin.utils import load_hash
 from hashashin.utils import minhash_similarity
 from hashashin.utils import serialize_features
 from hashashin.utils import vec2hex
-from hashashin.utils import features_to_dict
-from hashashin.utils import dict_to_features
+from hashashin.utils import get_binaries
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 BINARY_DIR = os.path.join(TEST_DIR, "binary_data")
-
-
-def get_binaries(path, bin_name=None, recursive=True, progress=False):
-    if os.path.isfile(path):
-        files = [path]
-    elif bin_name is None:
-        files = glob.glob(f"{path}/**", recursive=recursive)
-    else:
-        files = glob.glob(f"{path}/**/{bin_name}", recursive=recursive)
-    binaries = []
-    for f in tqdm(files, disable=not progress):
-        if os.path.isfile(f):
-            if "ELF" in magic.from_file(f):
-                binaries.append(f)
-    return binaries
 
 
 def const_to_numpy(constants):
@@ -62,33 +47,46 @@ def compute_metrics(similarity_matrix):
 
 
 def fmask(mask: slice, content: str):
-    '''Mask a feature string with a slice. Use step=1 to return the masked feature.'''
-    zeros = ['0'] * len(content)
+    """Mask a feature string with a slice. Use step=1 to return the masked feature."""
+    zeros = ["0"] * len(content)
     _content = list(content)
     invert = mask.step is not None
     mask = slice(mask.start * 8, mask.stop * 8)
     if invert:
         zeros[mask] = _content[mask]
-        return ''.join(zeros)
+        return "".join(zeros)
     else:
         _content[mask] = zeros[mask]
-        return ''.join(_content)
+        return "".join(_content)
 
 
-def compute_matrices(base_binary, generate=True, regenerate=False, version_paths=None, hash_progress=False, _feature_mask=None):
+def compute_matrices(
+    base_binary,
+    generate=True,
+    regenerate=False,
+    version_paths=None,
+    hash_progress=False,
+    _feature_mask=None,
+):
     if version_paths is None:
         version_paths = glob.glob(f"{BINARY_DIR}/{base_binary}/*[0-9].[0-9]*")
     elif isinstance(version_paths, str):
         print(f"Globbing {BINARY_DIR}/{base_binary}/{version_paths}")
         version_paths = glob.glob(f"{BINARY_DIR}/{base_binary}/{version_paths}")
     else:
-        assert isinstance(version_paths, list), "version_paths must be a string regex or a list of paths"
+        assert isinstance(
+            version_paths, list
+        ), "version_paths must be a string regex or a list of paths"
     binaries = set()
     for v in version_paths:
         bins = get_binaries(v)
-        print(f"Hashing {len(bins)} binaries in {v}: {[b.replace(v, '') for b in bins]}")
+        print(
+            f"Hashing {len(bins)} binaries in {v}: {[b.replace(v, '') for b in bins]}"
+        )
         for b in tqdm(bins, disable=hash_progress):
-            load_hash(b, progress=hash_progress, generate=generate, regenerate=regenerate)
+            load_hash(
+                b, progress=hash_progress, generate=generate, regenerate=regenerate
+            )
             binaries.add(b.replace(v, ""))
     binaries = sorted(list(binaries))
     minhash_similarities = np.zeros((len(binaries), len(binaries)))
@@ -112,7 +110,14 @@ def compute_matrices(base_binary, generate=True, regenerate=False, version_paths
     return minhash_similarities, jaccard_similarities, binaries
 
 
-def compute_single_bin_matrices(base_binary, binary, generate=True, regenerate=False, hash_progress=False):
+def compute_single_bin_matrices(
+    base_binary,
+    binary,
+    generate=True,
+    regenerate=False,
+    hash_progress=False,
+    _feature_mask=None,
+):
     binaries = sorted(get_binaries(f"{BINARY_DIR}/{base_binary}", bin_name=binary))
     for b in tqdm(binaries, disable=hash_progress):
         load_hash(b, progress=hash_progress, generate=generate, regenerate=regenerate)
@@ -126,6 +131,9 @@ def compute_single_bin_matrices(base_binary, binary, generate=True, regenerate=F
         b = binaries[j]
         sig_a, feat_a = load_hash(a, generate=False, progress=False)
         sig_b, feat_b = load_hash(b, generate=False, progress=False)
+        if _feature_mask is not None:
+            feat_a = {k: fmask(_feature_mask, v) for k, v in feat_a.items()}
+            feat_b = {k: fmask(_feature_mask, v) for k, v in feat_b.items()}
         minhash_similarities[i, j] = minhash_similarity(sig_a, sig_b)
         jaccard_similarities[i, j] = jaccard_similarity(feat_a, feat_b)
     return minhash_similarities, jaccard_similarities, binaries
@@ -133,8 +141,13 @@ def compute_single_bin_matrices(base_binary, binary, generate=True, regenerate=F
 
 def print_similarity_matrix(matrix: list[list], labels: list):
     assert len(matrix) == len(matrix[0]) == len(labels)
-    print(",".join([''] + labels))
-    print("\n".join(",".join(str(x) for x in labels[i:i+1] + list(matrix[i])) for i in range(len(matrix))))
+    print(",".join([""] + labels))
+    print(
+        "\n".join(
+            ",".join(str(x) for x in labels[i : i + 1] + list(matrix[i]))
+            for i in range(len(matrix))
+        )
+    )
 
 
 class TestCases(unittest.TestCase):
@@ -147,7 +160,10 @@ class TestCases(unittest.TestCase):
             return
         self.binary_path = f"{binary_dir}/{binary}"
         print(f"Binary Ninja loading {self.binary_path}...")
-        self.bv = binaryninja.open_view(self.binary_path, options={"analysis.experimental.gratuitousFunctionUpdate": True})
+        self.bv = binaryninja.open_view(
+            self.binary_path,
+            options={"analysis.experimental.gratuitousFunctionUpdate": True},
+        )
 
     def test_vector_conversion(self):
         vec = np.random.randint(0, 2**32 - 1, 1000, dtype=np.uint32)
@@ -170,20 +186,31 @@ class TestCases(unittest.TestCase):
         print(features_to_dict(dict_to_features(features_to_dict(feat))))
         self.assertTrue(all(feat == dict_to_features(features_to_dict(feat))))
 
+    @unittest.skip("slow")
     def test_get_constants(self):
         self.runSetup("busybox")
-        function_addr = 0x7e1c4
-        binaryninja.open_view(self.binary_path, options={"analysis.experimental.gratuitousFunctionUpdate": True})
+        function_addr = 0x7E1C4
+        binaryninja.open_view(
+            self.binary_path,
+            options={"analysis.experimental.gratuitousFunctionUpdate": True},
+        )
         f = self.bv.get_function_at(function_addr)
         constants = hashashin.get_constants(f)
         for _ in tqdm(range(10)):
-            _view = binaryninja.open_view(self.binary_path, options={"analysis.experimental.gratuitousFunctionUpdate": True})
-            new_constants = hashashin.get_constants(_view.get_function_at(function_addr))
+            _view = binaryninja.open_view(
+                self.binary_path,
+                options={"analysis.experimental.gratuitousFunctionUpdate": True},
+            )
+            new_constants = hashashin.get_constants(
+                _view.get_function_at(function_addr)
+            )
             if constants != new_constants:
                 print("Constants changed between views")
                 hashashin.get_constants(_view.get_function_at(function_addr))
             _view.update_analysis_and_wait()
-            new_constants = hashashin.get_constants(_view.get_function_at(function_addr))
+            new_constants = hashashin.get_constants(
+                _view.get_function_at(function_addr)
+            )
             if constants != new_constants:
                 print("Constants changed between views and analysis")
                 hashashin.get_constants(_view.get_function_at(function_addr))
@@ -257,6 +284,7 @@ class TestCases(unittest.TestCase):
         self.assertEqual(feats.keys(), feats2.keys())
         self.assertTrue(all([all(feats[k] == feats2[k]) for k in feats.keys()]))
 
+    @unittest.skip("slow")
     def test_busybox_deterministic(self):
         self.runSetup("busybox")
         sig, feats = hashashin.hash_all(
@@ -276,6 +304,7 @@ class TestCases(unittest.TestCase):
         # print(features_to_dict(feats[k]))
         # print(features_to_dict(feats2[k]))
 
+    @unittest.skip("slow & redundant")
     def test_busybox_full_hash(self):
         self.runSetup("busybox")
         busybox_sig, busybox_features = hashashin.hash_all(
@@ -314,8 +343,8 @@ class TestCases(unittest.TestCase):
         versions = ("v5.9.2", "v5.9.3")
         a = f"{BINARY_DIR}/{base_binary}/{versions[0]}/sbin/snmpd"
         b = f"{BINARY_DIR}/{base_binary}/{versions[1]}/sbin/snmpd"
-        sig_a, feat_a = load_hash(a, generate=False)
-        sig_b, feat_b = load_hash(b, generate=False)
+        sig_a, feat_a = load_hash(a, generate=True)
+        sig_b, feat_b = load_hash(b, generate=True)
         minhash_sim = minhash_similarity(sig_a, sig_b)
         jaccard_sim = jaccard_similarity(feat_a, feat_b)
         print(f"Minhash similarity: {minhash_sim}")
@@ -327,8 +356,8 @@ class TestCases(unittest.TestCase):
         versions = ("v5.9.2", "v5.9.3")
         a = f"{BINARY_DIR}/{base_binary}/{versions[0]}/bin/agentxtrap"
         b = f"{BINARY_DIR}/{base_binary}/{versions[1]}/bin/agentxtrap"
-        sig_a, feat_a = load_hash(a, generate=False)
-        sig_b, feat_b = load_hash(b, generate=False)
+        sig_a, feat_a = load_hash(a, generate=True)
+        sig_b, feat_b = load_hash(b, generate=True)
         minhash_sim = minhash_similarity(sig_a, sig_b)
         jaccard_sim = jaccard_similarity(feat_a, feat_b)
         print(f"Minhash similarity: {minhash_sim}")
@@ -340,8 +369,8 @@ class TestCases(unittest.TestCase):
         versions = ("v5.9.2", "v5.9.3")
         a = f"{BINARY_DIR}/{base_binary}/{versions[0]}/bin/encode_keychange"
         b = f"{BINARY_DIR}/{base_binary}/{versions[1]}/bin/encode_keychange"
-        sig_a, feat_a = load_hash(a, generate=False)
-        sig_b, feat_b = load_hash(b, generate=False)
+        sig_a, feat_a = load_hash(a, generate=True)
+        sig_b, feat_b = load_hash(b, generate=True)
         minhash_sim = minhash_similarity(sig_a, sig_b)
         jaccard_sim = jaccard_similarity(feat_a, feat_b)
         print(f"Minhash similarity: {minhash_sim}")
@@ -353,8 +382,8 @@ class TestCases(unittest.TestCase):
         versions = ("v5.9.2", "v5.9.3")
         a = f"{BINARY_DIR}/{base_binary}/{versions[0]}/sbin/snmptrapd"
         b = f"{BINARY_DIR}/{base_binary}/{versions[1]}/sbin/snmptrapd"
-        sig_a, feat_a = load_hash(a, generate=False)
-        sig_b, feat_b = load_hash(b, generate=False)
+        sig_a, feat_a = load_hash(a, generate=True)
+        sig_b, feat_b = load_hash(b, generate=True)
         minhash_sim = minhash_similarity(sig_a, sig_b)
         jaccard_sim = jaccard_similarity(feat_a, feat_b)
         print(f"Minhash similarity: {minhash_sim}")
@@ -365,8 +394,8 @@ class TestCases(unittest.TestCase):
         base_binary = "net-snmp"
         a = f"{BINARY_DIR}/{base_binary}/v5.9.2/sbin/snmpd"
         b = f"{BINARY_DIR}/{base_binary}/v5.9.2/sbin/snmptrapd"
-        sig_a, feat_a = load_hash(a, generate=False)
-        sig_b, feat_b = load_hash(b, generate=False)
+        sig_a, feat_a = load_hash(a, generate=True)
+        sig_b, feat_b = load_hash(b, generate=True)
         minhash_sim = minhash_similarity(sig_a, sig_b)
         jaccard_sim = jaccard_similarity(feat_a, feat_b)
         print(f"Minhash similarity: {minhash_sim}")
@@ -375,7 +404,9 @@ class TestCases(unittest.TestCase):
         self.assertLess(abs(minhash_sim - jaccard_sim), 0.1)
 
     def test_net_snmp(self):
-        minhash_similarities, jaccard_similarities, binaries = compute_matrices("net-snmp")
+        minhash_similarities, jaccard_similarities, binaries = compute_matrices(
+            "net-snmp"
+        )
         print_similarity_matrix(minhash_similarities, binaries)
         print_similarity_matrix(jaccard_similarities, binaries)
         minhash_metrics = compute_metrics(minhash_similarities)
@@ -414,7 +445,9 @@ class TestCases(unittest.TestCase):
         self.assertGreaterEqual(minhash_metrics[2], 0.9)
 
     def test_libcurl(self):
-        minhash_similarities, jaccard_similarities = compute_matrices("libcurl")
+        minhash_similarities, jaccard_similarities, _ = compute_matrices(
+            "libcurl", version_paths="*[0-9]_[0-9]*"
+        )
         print(
             "\n".join(
                 [",".join([str(y) for y in list(x)]) for x in minhash_similarities]
@@ -439,9 +472,9 @@ class TestCases(unittest.TestCase):
         self.assertGreaterEqual(minhash_metrics[2], 0.9)
 
     def test_zero_constants(self):
-        minhash_similarities, jaccard_similarities, binaries = compute_matrices("net-snmp", regenerate=False,
-                                                                                generate=False,
-                                                                                _feature_mask=slice(4, 68))
+        minhash_similarities, jaccard_similarities, binaries = compute_matrices(
+            "net-snmp", regenerate=False, generate=False, _feature_mask=slice(4, 68)
+        )
         minhash_metrics = compute_metrics(minhash_similarities)
         print(
             f"Minhash precision: {minhash_metrics[0]}, recall: {minhash_metrics[1]}, f1: {minhash_metrics[2]}"
@@ -454,7 +487,16 @@ class TestCases(unittest.TestCase):
     def test_split_large_int(self):
         from hashashin.utils import split_int_to_uint32, merge_uint32_to_int
         import random
-        x = random.randint(2 ** 128, 2 ** 129)
-        print(x, split_int_to_uint32(x))
-        y = merge_uint32_to_int(split_int_to_uint32(x))
+
+        self.assertEqual(1, merge_uint32_to_int(split_int_to_uint32(1, pad=32)))
+        x = random.randint(2**32, 2**33)
+        y = merge_uint32_to_int(split_int_to_uint32(x, pad=32))
         self.assertEqual(x, y)
+
+    # @unittest.skip("Not a test")
+    def test_dominator_encoding(self):
+        self.runSetup("busybox")
+        sig, feats = load_hash(
+            self.binary_path, generate=True, progress=True, deserialize=True, bv=self.bv
+        )
+        print("\n".join(map(lambda a: str(features_to_dict(a)), feats.values())))

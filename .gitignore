@@ -5,6 +5,7 @@ binary_data/
 fuzzy_hashing_papers/
 profile_code.py
 .gitignore
+*.hash.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

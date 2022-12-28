@@ -1,24 +1,41 @@
 # Copyright 2019 River Loop Security LLC, All Rights Reserved
-# Author Rylan O'Connell
+# Authors Rylan O'Connell and Jonathan Prokos
+
+import hashlib
+import logging
+import os
+import re
+from typing import Dict
+from typing import Optional
+from typing import Tuple
+from typing import Union
 
 import binaryninja as binja
-from binaryninja import Function, BasicBlockList, BasicBlock, BinaryView
-from hashashin.utils import vec2hex
-from typing import Dict, Optional, Callable, Tuple, Union
 import numpy as np
-import hashlib
-import re
+from binaryninja import BasicBlock
+from binaryninja import BinaryView
+from binaryninja import Function
+from binaryninja import enums
+from binaryninja import open_view
 from tqdm import tqdm
 
-from hashashin.utils import (
-    get_cyclomatic_complexity,
-    get_constants,
-    get_strings,
-    write_hash,
-    serialize_features,
-)
-import hashashin
+from hashashin.utils import compute_edge_taxonomy_histogram
+from hashashin.utils import compute_instruction_histogram
+from hashashin.utils import compute_vertex_taxonomy_histogram
+from hashashin.utils import dominator_signature
+from hashashin.utils import func2str
+from hashashin.utils import get_constants
+from hashashin.utils import get_cyclomatic_complexity
+from hashashin.utils import get_strings
+from hashashin.utils import serialize_features
+from hashashin.utils import split_int_to_uint32
+from hashashin.utils import vec2hex
+from hashashin.utils import write_hash
+from hashashin.utils import features_to_dict
+from hashashin.utils import load_hash
+from hashashin.utils import get_binaries
 
+logger = logging.getLogger(os.path.basename(__name__))
 SIGNATURE_LEN = 20
 
 
@@ -56,11 +73,16 @@ def hash_all(
     """
     string_map = get_strings(bv)
     features = {}
-    h_planes = None  # gen_planes()
+    h_planes = gen_planes(20)
     # baseline_sig, baseline_feats = hashashin.utils.load_hash(
     #     bv.file.filename, deserialize=True, bv=bv
     # )
-    for function in tqdm(bv.functions, disable=not show_progress):
+    print(
+        "Hashing functions... (if you are seeing this, you should try showing progress with --progress)",
+        end="\r",
+    )
+    for function in (pbar := tqdm(bv.functions, disable=not show_progress)):
+        pbar.set_description(f"Hashing {func2str(function)}")
         feature = hash_function(function, h_planes, string_map=string_map)
         features[function] = feature
         # if vec2hex(features[function]) != vec2hex(baseline_feats[function]):
@@ -97,7 +119,9 @@ def min_hash(
 
 
 def hash_function(
-    function: Function, h_planes: Optional[np.ndarray] = None, string_map=None
+    function: Function,
+    h_planes: Optional[np.ndarray] = None,
+    string_map=None,
 ) -> np.ndarray:
     """
     Hash a given function by "bucketing" basic blocks to capture a high level overview of their functionality, then
@@ -112,7 +136,9 @@ def hash_function(
     """
     if not string_map:
         string_map = get_strings(function.view)
-    features = extract_features(function, string_map=string_map)
+    if h_planes is None:
+        h_planes = gen_planes(20)
+    features = extract_features(function, string_map=string_map, h_planes=h_planes)
     # if function.start == 141836:
     #     print('hey now')
     # if function.start == 141836 and vec2hex(features) != '':
@@ -120,10 +146,23 @@ def hash_function(
     return features
 
 
-def extract_features(function: Function, string_map=None) -> np.ndarray[int, ...]:
+def extract_features(
+    function: Function, string_map=None, h_planes=None
+) -> np.ndarray[int, ...]:
     """
     Extract features from a function to be used in the hashing process.
     This includes ideas from https://docs.google.com/document/d/1ZphECbrEUTw4WNepQQ2KrABll0JXHUjElEfXVjbV4Jg/edit
+    Sizes (uint32):
+        - 1: cyclomatic complexity
+        - 1: number of instructions
+        - 1: number of strings
+        - 1: maximum string length
+        - 64: constants
+        - 512: strings
+        - len(enums.MediumLevelILOperation.__members__) [132]: instruction histogram
+        - 32: dominator tree signature broken into 32 32-bit integers
+        - 3: taxonomy of vertices
+        - 4: taxonomy of edges
 
     :param string_map: dictionary of strings in each function
     :param function: the function to extract features from
@@ -131,8 +170,13 @@ def extract_features(function: Function, string_map=None) -> np.ndarray[int, ...
     """
     if not string_map:
         string_map = get_strings(function.view)
+    if h_planes is None:
+        h_planes = gen_planes(20)
+    num_instr_categories = len(enums.MediumLevelILOperation.__members__)
+    features = np.zeros(
+        4 + 64 + 512 + num_instr_categories + 32 + 3 + 4, dtype=np.uint32
+    )
     strings = sorted(string_map[function.start])
-    features = np.zeros(4 + 64 + 512, dtype=np.uint32)
 
     offset = 0
     features[offset] = get_cyclomatic_complexity(function)
@@ -150,7 +194,7 @@ def extract_features(function: Function, string_map=None) -> np.ndarray[int, ...
     constants = np.array(sorted(constants), dtype=np.int32)
     if len(constants) > 64:
         constants = constants[:64]
-    features[offset: offset + 64] = np.pad(
+    features[offset : offset + 64] = np.pad(
         constants, (0, 64 - len(constants)), "constant", constant_values=0
     )
     offset += 64
@@ -160,10 +204,33 @@ def extract_features(function: Function, string_map=None) -> np.ndarray[int, ...
     if len(strings) > 512:
         strings = strings[:512]
     strings = np.frombuffer(strings.encode("utf-8"), dtype=np.byte)
-    features[offset: offset + 512] = np.pad(
+    features[offset : offset + 512] = np.pad(
         strings, (0, 512 - len(strings)), "constant", constant_values=0
     )
     offset += 512
+
+    # instruction histogram
+    features[offset : offset + num_instr_categories] = compute_instruction_histogram(
+        function
+    )
+    offset += num_instr_categories
+
+    # If it is a tiny function just stop early to save compute
+    if len(function.basic_blocks) == 1:
+        return features
+
+    # dominator signature
+    sig = dominator_signature(function)
+    features[offset : offset + 32] = split_int_to_uint32(sig, pad=32, wrap=True)
+    offset += 32
+
+    # vertex taxonomy histogram
+    features[offset : offset + 3] = compute_vertex_taxonomy_histogram(function)
+    offset += 3
+
+    # edge taxonomy histogram
+    features[offset : offset + 4] = compute_edge_taxonomy_histogram(function)
+    offset += 4
 
     return features
 
@@ -328,3 +395,79 @@ def brittle_hash(bv: BinaryView, bb: BasicBlock) -> str:
     m = hashlib.sha256()
     m.update(disassembly_text.encode("utf-8"))
     return m.digest().hex()
+
+
+def main():
+    import argparse
+    import pprint as pp
+
+    parser = argparse.ArgumentParser()
+    # parse binary file path
+    parser.add_argument(
+        "-b", "--binary", type=str, required=True, help="Path to binary file(s)"
+    )
+    parser.add_argument(
+        "-f",
+        "--function",
+        type=str,
+        required=False,
+        help="Optional name or address of function to hash.",
+    )
+    parser.add_argument("--progress", action="store_true", help="Show progress bar.")
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        help="Cache results to disk. Cannot be used when specifying a function.",
+    )
+    parser.add_argument(
+        "--load", action="store_true", help="Load cached results from disk."
+    )
+    args = parser.parse_args()
+
+    bins = get_binaries(args.binary)
+    if len(bins) == 0:
+        raise ValueError(f"No binaries found at path: {args.binary}")
+    if len(bins) > 1 and args.function is not None:
+        raise ValueError("Cannot specify a function when hashing multiple binaries.")
+    for b in bins:
+        logger.info(f"Hashing {b}")
+        bv = open_view(b)
+        if args.load:
+            try:
+                load_hash(args.binary, bv=bv)
+            except (ValueError, FileNotFoundError) as e:
+                logger.error(
+                    f"Error loading cached results: {e}.\nPlease use --cache to generate a cache file."
+                )
+        if args.function is not None:
+            if args.cache:
+                raise ValueError(
+                    "Must hash full binary to cache results, rerun without --cache or --function."
+                )
+            if args.function.isdigit():
+                function = bv.get_function_at(int(args.function))
+            elif args.function.startswith("0x"):
+                function = bv.get_function_at(int(args.function, 16))
+            else:
+                function = bv.get_functions_by_name(args.function)
+                if len(function) > 1:
+                    raise ValueError(
+                        "Multiple functions with the same name found, please specify an address"
+                    )
+                function = function[0]
+            print(
+                f"Features for {function}:\n{pp.pformat(features_to_dict(hash_function(function)), sort_dicts=False)}"
+            )
+            continue
+        signature, features = hash_all(
+            bv,
+            return_serializable=True,
+            show_progress=args.progress,
+            save_to_file=args.cache,
+        )
+        print(f"Signature for {b}:\n{signature}")
+    return
+
+
+if __name__ == "__main__":
+    main()
