@@ -5,7 +5,7 @@
 ### Setup
 #### Prerequisites
 A valid binary ninja license is required to use this library - please ensure Binary Ninja is installed and that the Python
-API is available.
+API is available. `setup.py` will do its best to run this install script but may not work in all cases.
 
 To install the Binary Ninja API, run the `install-api.py` script located in the the Binary Ninja installationation
 directory:
@@ -15,9 +15,26 @@ directory:
 
 #### Installation
 To install Hashashin as a library, simply run `pip install .` from within the root of this repository.
+If you would like to run the provided tests or notebook, run `pip install .[dev]` instead.
 
 
-### Usage
+### CLI Usage
+
+The CLI will only print the hash result to the screen by default, please use `hashashin -h` to see all available options.
+
+#### Hash a single function
+```shell
+hashashin -b <path_to_binary> -f <function_name || function_address>
+```
+
+#### Hash a full binary
+```shell
+hashashin -b <path_to_binary>
+```
+
+### Python Usage
+
+_Note this section is out of date and will be updated soon._
 
 #### Hash a single function  
 
@@ -43,7 +60,7 @@ To install Hashashin as a library, simply run `pip install .` from within the ro
 }
 ```
 
-#### Hash basic block
+#### Hash basic block (outdated)
 ```python
 >>> import hashashin
 >>> import binaryninja
