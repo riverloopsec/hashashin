@@ -35,6 +35,7 @@ from hashashin.utils import features_to_dict
 from hashashin.utils import load_hash
 from hashashin.utils import get_binaries
 
+logging.basicConfig()
 logger = logging.getLogger(os.path.basename(__name__))
 SIGNATURE_LEN = 20
 
@@ -419,26 +420,57 @@ def main():
         action="store_true",
         help="Cache results to disk. Cannot be used when specifying a function.",
     )
-    parser.add_argument(
+    load_group = parser.add_mutually_exclusive_group()
+    load_group.add_argument(
         "--load", action="store_true", help="Load cached results from disk."
     )
+    load_group.add_argument(
+        "--force-load",
+        action="store_true",
+        help="Used to force hash generation if --load fails.",
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true", help="Suppress output to stdout."
+    )
     args = parser.parse_args()
+    if args.quiet:
+        logger.setLevel(logging.ERROR)
+    else:
+        logger.setLevel(logging.INFO)
 
-    bins = get_binaries(args.binary)
+    if args.function and os.path.isdir(args.binary):
+        logger.error(
+            "Cannot specify a function when hashing multiple binaries. Exiting."
+        )
+        return
+    bins = get_binaries(os.path.expanduser(args.binary), progress=args.progress)
     if len(bins) == 0:
         raise ValueError(f"No binaries found at path: {args.binary}")
-    if len(bins) > 1 and args.function is not None:
-        raise ValueError("Cannot specify a function when hashing multiple binaries.")
+    if len(bins) > 1:
+        if args.function is not None:
+            raise ValueError(
+                "Cannot specify a function when hashing multiple binaries."
+            )
+        logger.info(f"Hashing {len(bins)} binaries...")
     for b in bins:
+        b = os.path.relpath(b)
         logger.info(f"Hashing {b}")
-        bv = open_view(b)
-        if args.load:
+        if args.load or args.force_load:
             try:
-                load_hash(args.binary, bv=bv)
+                signature, features = load_hash(
+                    b,
+                    generate=args.force_load,
+                    regenerate=False,
+                    progress=args.progress,
+                )
+                logger.info(f"Signature for {b}:\n{signature}")
+                continue
             except (ValueError, FileNotFoundError) as e:
                 logger.error(
                     f"Error loading cached results: {e}.\nPlease use --cache to generate a cache file."
                 )
+                return
+        bv = open_view(b)
         if args.function is not None:
             if args.cache:
                 raise ValueError(
@@ -455,7 +487,7 @@ def main():
                         "Multiple functions with the same name found, please specify an address"
                     )
                 function = function[0]
-            print(
+            logger.info(
                 f"Features for {function}:\n{pp.pformat(features_to_dict(hash_function(function)), sort_dicts=False)}"
             )
             continue
@@ -465,7 +497,7 @@ def main():
             show_progress=args.progress,
             save_to_file=args.cache,
         )
-        print(f"Signature for {b}:\n{signature}")
+        logger.info(f"Signature for {b}:\n{signature}")
     return
 
 

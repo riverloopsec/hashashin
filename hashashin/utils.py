@@ -120,7 +120,17 @@ def get_binaries(path, bin_name=None, recursive=True, progress=False):
     else:
         files = glob.glob(f"{path}/**/{bin_name}", recursive=recursive)
     binaries = []
-    for f in tqdm(files, disable=not progress):
+    if not progress:
+        print(
+            f"Iterating over {len(files)} files. If you see this, consider using --progress."
+        )
+    elif len(files) == 1:
+        progress = False
+    for f in tqdm(
+        files,
+        disable=not progress,
+        desc=f"Gathering binaries in {os.path.relpath(path)}",
+    ):
         if os.path.isfile(f):
             if "ELF" in magic.from_file(f):
                 binaries.append(f)
