@@ -122,7 +122,7 @@ def get_binaries(path, bin_name=None, recursive=True, progress=False):
     binaries = []
     if not progress:
         print(
-            f"Iterating over {len(files)} files. If you see this, consider using --progress."
+            f"Iterating over {len(files)} files. If you see this, consider using --progress.", end='\r'
         )
     elif len(files) == 1:
         progress = False
@@ -270,9 +270,14 @@ def write_hash(
     if not filepath.endswith(HASH_EXT):
         filepath += HASH_EXT
     if os.path.exists(filepath) and not overwrite:
-        print(f"Skipping {filepath} (already exists)")
-        return
-        # raise FileExistsError(f"Hash file already exists: {filepath}")
+        cached_sig, cached_feats = load_hash(filepath, only_signature=False)
+        random_feat = features[set(features.keys()).pop()]
+        random_feat = hex2vec(random_feat) if isinstance(random_feat, str) else random_feat
+        random_cached_feat = hex2vec(cached_feats[set(cached_feats.keys()).pop()])
+        if signature == cached_sig and len(features) == len(cached_feats) and len(random_feat) == len(random_cached_feat):
+            print(f"Skipping {filepath} (already exists) & has same signature")
+            return
+        raise ValueError(f"Hash file {filepath} already exists and signatures differ! You should regenerate.")
     if any(not isinstance(dv, str) for dv in features.values()):
         features = serialize_features(features)
     with open(filepath, "w") as f:
@@ -294,6 +299,7 @@ def load_hash(
     progress=False,
     deserialize=False,
     bv: Optional[BinaryView] = None,
+    only_signature=False,
 ) -> Tuple[str, Union[Dict[Function, np.ndarray], Dict[str, str]]]:
     """Load hash from a file"""
     if not os.path.exists(filepath):
@@ -313,6 +319,8 @@ def load_hash(
     try:
         with open(filepath, "r") as f:
             binhash = json.load(f)
+            if only_signature:
+                return binhash["signature"], {}
             binhash["features"] = decode_feature_dict(binhash["features"])
             # binhash["features"] = {k: zero_constants(v) for k, v in binhash["features"].items()}
             if deserialize:
@@ -475,6 +483,9 @@ def get_constants(fn: binaryninja.function.Function) -> Set[ConstantReference]:
             consts.remove(c)
             consts.add(c >> 32)
             consts.add(c & 0xFFFFFFFF)
+        elif c < 0:  # wrap negative values
+            consts.remove(c)
+            consts.add(c % 0xFFFFFFFF)
     return set(consts)
 
 

@@ -82,8 +82,10 @@ def hash_all(
         "Hashing functions... (if you are seeing this, you should try showing progress with --progress)",
         end="\r",
     )
+    import shutil
+    ts = shutil.get_terminal_size(fallback=(120, 50)).columns // 2
     for function in (pbar := tqdm(bv.functions, disable=not show_progress)):
-        pbar.set_description(f"Hashing {func2str(function)}")
+        pbar.set_description(f"Hashing {func2str(function):{ts}.{ts}}")
         feature = hash_function(function, h_planes, string_map=string_map)
         features[function] = feature
         # if vec2hex(features[function]) != vec2hex(baseline_feats[function]):
@@ -192,7 +194,7 @@ def extract_features(
     offset += 1
 
     constants = get_constants(function)
-    constants = np.array(sorted(constants), dtype=np.int32)
+    constants = np.array(sorted(constants), dtype=np.uint32)
     if len(constants) > 64:
         constants = constants[:64]
     features[offset : offset + 64] = np.pad(
@@ -398,6 +400,20 @@ def brittle_hash(bv: BinaryView, bb: BasicBlock) -> str:
     return m.digest().hex()
 
 
+def get_func_from_unknown(bv: BinaryView, func: Union[str, int]) -> Function:
+    if func.isdigit():
+        return bv.get_function_at(int(func))
+    elif func.startswith("0x"):
+        return bv.get_function_at(int(func, 16))
+    else:
+        function = bv.get_functions_by_name(func)
+        if len(function) > 1:
+            raise ValueError(
+                "Multiple functions with the same name found, please specify an address"
+            )
+        return function[0]
+
+
 def main():
     import argparse
     import pprint as pp
@@ -462,8 +478,15 @@ def main():
                     generate=args.force_load,
                     regenerate=False,
                     progress=args.progress,
+                    only_signature=args.function is None,
                 )
-                logger.info(f"Signature for {b}:\n{signature}")
+                logger.info(f"Cached signature for {b}:\n{signature}")
+                if args.function:
+                    try:
+                        func = next(f for f in features if args.function in f)
+                    except StopIteration:
+                        func = func2str(get_func_from_unknown(open_view(b), args.function))
+                    logger.info(f"Hash for {args.function}:\n{pp.pformat(features_to_dict(features[func]), sort_dicts=False)}")
                 continue
             except (ValueError, FileNotFoundError) as e:
                 logger.error(
@@ -476,17 +499,7 @@ def main():
                 raise ValueError(
                     "Must hash full binary to cache results, rerun without --cache or --function."
                 )
-            if args.function.isdigit():
-                function = bv.get_function_at(int(args.function))
-            elif args.function.startswith("0x"):
-                function = bv.get_function_at(int(args.function, 16))
-            else:
-                function = bv.get_functions_by_name(args.function)
-                if len(function) > 1:
-                    raise ValueError(
-                        "Multiple functions with the same name found, please specify an address"
-                    )
-                function = function[0]
+            function = get_func_from_unknown(bv, args.function)
             logger.info(
                 f"Features for {function}:\n{pp.pformat(features_to_dict(hash_function(function)), sort_dicts=False)}"
             )
