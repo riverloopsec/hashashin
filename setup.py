@@ -1,8 +1,8 @@
-import setuptools
+import setuptools  # type: ignore
 
 installed_api = False
 try:
-    import binaryninja
+    import binaryninja  # type: ignore
 except ImportError:
     import os
 
@@ -25,6 +25,7 @@ except ImportError:
 setuptools.setup(
     name="hashashin",
     version="0.1.0",
+    license="MIT",
     author="Jonathan Prokos",
     author_email="jonathan.prokos@twosixtech.com",
     description="Binary Fingerprint Library",
