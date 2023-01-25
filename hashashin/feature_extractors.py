@@ -8,59 +8,41 @@ from typing import Union
 from typing import Annotated
 from typing import Optional
 from typing import TYPE_CHECKING
+from enum import Enum
 
 import numpy as np
 import numpy.typing as npt
 from binaryninja import BasicBlock  # type: ignore
 from binaryninja import BinaryView  # type: ignore
-from binaryninja import Function  # type: ignore
 from binaryninja import enums  # type: ignore
-
-if TYPE_CHECKING:
-    from hashashin.types import FuncSig
+from binaryninja import core_version
+from binaryninja import open_view
+from hashashin.classes import FunctionFeatures, AbstractFunction, BinaryNinjaFunction, BinjaFunction, BinarySignature
+from pathlib import Path
 
 logger = logging.getLogger(os.path.basename(__name__))
 
 NUM_INSTR_CATEGORIES = len(enums.MediumLevelILOperation.__members__)
 
 
-@dataclass
-class Feature:
-    """Dataclass to represent a feature extractor."""
+# TODO: create Function class to replace binja function
+class FeatureExtractor:
+    version: str
 
-    def _default_repr(
-        self, features: FuncSig
-    ) -> tuple[str, Optional[Union[int, np.ndarray]]]:
-        """
-        Default string representation of a feature vector.
-        :param features: feature vector
-        :return: string representation (name, repr)
-        """
-        f_idx = FEATURES.index(self)
-        offset = sum([f.size for f in FEATURES[:f_idx]])
-        if features.features is None:
-            return self.name, None
-        if isinstance(features.features, str):
-            raise
-        if self.size == 1:
-            return self.name, features.features[offset]
-        return self.name, features.features[offset : offset + self.size]
+    def extract(self, func: AbstractFunction) -> FunctionFeatures:
+        raise NotImplementedError
 
-    def _default_repr_wrapper(self, features: FuncSig) -> tuple[str, str]:
-        ret = self._default_repr(features)
-        return ret[0], str(ret[1])
+    def extract_from_file(self, path: Path) -> BinarySignature:
+        raise NotImplementedError
 
-    name: str
-    size: int
-    extractor: Callable[[Function], np.ndarray]
-    repr: Callable[["Feature", FuncSig], tuple[str, str]] = _default_repr_wrapper
-
-    def __call__(self, func: Function) -> np.ndarray:
-        return self.extractor(func)
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.version})"
 
 
 def split_int_to_uint32(x: int, pad=None, wrap=False) -> npt.NDArray[np.uint32]:
     """Split very large integers into array of uint32 values. Lowest bits are first."""
+    if x < np.iinfo(np.uint32).max:
+        return np.array([x], dtype=np.uint32)
     if pad is None:
         pad = int(np.ceil(len(bin(x)) / 32))
     elif pad < int(np.ceil(len(bin(x)) / 32)):
@@ -85,7 +67,7 @@ def merge_uint32_to_int(x: npt.NDArray[np.uint32]) -> int:
     return ret
 
 
-def get_cyclomatic_complexity(fn: Function) -> int:
+def compute_cyclomatic_complexity(fn: BinaryNinjaFunction) -> int:
     """
     Annotates functions with a cyclomatic complexity calculation.
     See [Wikipedia](https://en.wikipedia.org/wiki/Cyclomatic_complexity) for more information.
@@ -127,7 +109,12 @@ def get_strings(binary_view: BinaryView, min_length: int = 5) -> dict[int, set[s
     return mapping
 
 
-def get_constants(fn: Function) -> set[int]:
+def get_fn_strings(fn: BinaryNinjaFunction) -> set[str]:
+    """Wrapper function to call get_strings for a single function"""
+    return get_strings(fn.view)[fn.start]
+
+
+def compute_constants(fn: BinaryNinjaFunction) -> set[int]:
     """
     Extracts constants used within a function.
 
@@ -161,15 +148,15 @@ def get_constants(fn: Function) -> set[int]:
 
 
 def compute_instruction_histogram(
-    fn: Function, timeout: int = 15
-) -> npt.NDArray[np.uint32]:
+    fn: BinaryNinjaFunction, timeout: int = 15
+) -> list[int]:
     """
     Computes the instruction histogram for a function.
     :param fn: function to compute histogram for
     :param timeout: timeout for analysis in seconds
     :return: vector of instruction counts by type
     """
-    vector = np.zeros(len(enums.MediumLevelILOperation.__members__), dtype=np.uint32)
+    vector: list[int] = [0] * len(enums.MediumLevelILOperation.__members__)
     if not fn.mlil:
         fn.analysis_skipped = False
         start = time.time()
@@ -185,9 +172,8 @@ def compute_instruction_histogram(
                 f"MLIL not available for function or analysis exceeded {timeout}s timeout."
             )
     for instr in fn.mlil_instructions:
-        if vector[instr.operation.value] >= np.iinfo(np.uint32).max:
-            logger.warning("Instruction count overflow for %s", instr.operation.name)
-        vector[instr.operation.value] += 1
+        # https://youtrack.jetbrains.com/issue/PY-55734/IntEnum.value-is-not-recognized-as-a-property
+        vector[instr.operation.value: int] += 1
     return vector
 
 
@@ -210,13 +196,13 @@ def walk(block, seen=None):
         yield 0
 
 
-def dominator_signature(entry: Union[BasicBlock, Function]) -> int:
+def compute_dominator_signature(entry: Union[BasicBlock, BinaryNinjaFunction]) -> int:
     """
     Computes the dominator signature for a function or basic block.
     :param entry: entry block to compute signature for
     :return: dominator signature as integer
     """
-    if isinstance(entry, Function):
+    if isinstance(entry, BinaryNinjaFunction):
         entry = entry.basic_blocks[0]
     assert (
         len(entry.dominators) == 1 and entry.dominators[0] == entry
@@ -224,7 +210,7 @@ def dominator_signature(entry: Union[BasicBlock, Function]) -> int:
     return int("".join(map(str, walk(entry))), 2)
 
 
-def compute_vertex_taxonomy_histogram(fn: Function) -> npt.NDArray[np.uint32]:
+def compute_vertex_taxonomy_histogram(fn: BinaryNinjaFunction) -> list[int]:
     """
     Computes the vertex taxonomy histogram for a function.
     :param fn: function to compute histogram for
@@ -233,8 +219,7 @@ def compute_vertex_taxonomy_histogram(fn: Function) -> npt.NDArray[np.uint32]:
         1: Exit
         2: Normal
     """
-    # TODO: add wrap check
-    vector = np.zeros(3, dtype=np.uint32)
+    vector = [0] * 3
     for block in fn.basic_blocks:
         if block.dominators == [block]:
             vector[0] += 1
@@ -298,7 +283,7 @@ def recursive_edge_count(block, start_time=None, end_time=None, seen=None, dfs_t
         dfs_time += 1
 
 
-def compute_edge_taxonomy_histogram(fn: Function) -> npt.NDArray:
+def compute_edge_taxonomy_histogram(fn: BinaryNinjaFunction) -> list[int]:
     """
     Computes the edge taxonomy histogram for a function.
     Gets the basic block at the start of the function
@@ -309,129 +294,47 @@ def compute_edge_taxonomy_histogram(fn: Function) -> npt.NDArray:
     """
     # TODO: fix return type hint
     entry = fn.get_basic_block_at(fn.start)
-    return np.bincount(list(recursive_edge_count(entry)), minlength=4)
+    return list(np.bincount(list(recursive_edge_count(entry)), minlength=4))
 
 
-def _constants_repr(self: Feature, features: FuncSig) -> tuple[str, str]:
-    """
-    Returns a string representation of the constants stored in a feature.
-    :param features: feature vector representing first 64 bytes of constants
-    :return: string representation
-    """
-    ret = self._default_repr(features)
-    if not isinstance(ret[1], np.ndarray):
-        raise ValueError(f"Expected numpy array, got {type(ret[1])}")
-    return ret[0], ",".join(
-        [hex(ret[1][i]) for i in range(len(ret[1])) if i == 0 or ret[1][i] != 0]
-    )
+class BinjaFeatureExtractor(FeatureExtractor):
+    version = core_version()
 
+    def extract(self, function: AbstractFunction) -> FunctionFeatures:
+        """
+        Extracts features from a function.
+        :param function: function to extract features from
+        :return: features
+        """
+        if not isinstance(function.function, BinaryNinjaFunction):
+            raise ValueError(f"Expected Binary Ninja function, got {type(function.function)}")
+        func: BinaryNinjaFunction = function.function
+        return FunctionFeatures(
+            extraction_engine=self,
+            function=BinjaFunction.fromFunctionRef(func),
+            cyclomatic_complexity=compute_cyclomatic_complexity(func),
+            num_instructions=len(list(func.instructions)),
+            num_strings=len(get_fn_strings(func)),
+            max_string_length=len(max(get_fn_strings(func), key=len)),
+            constants=sorted(compute_constants(func)),
+            strings=sorted(get_fn_strings(func)),
+            instruction_histogram=compute_instruction_histogram(func),
+            dominator_signature=compute_dominator_signature(func),
+            vertex_histogram=compute_vertex_taxonomy_histogram(func),
+            edge_histogram=compute_edge_taxonomy_histogram(func),
+        )
 
-def _strings_repr(self: Feature, features: FuncSig) -> tuple[str, str]:
-    """
-    Returns a string representation of the strings stored in a feature.
-    :param features: feature vector representing first 64 bytes of strings
-    :return: string representation
-    """
-    ret = self._default_repr(features)
-    if not isinstance(ret[1], np.ndarray):
-        raise ValueError(f"Expected numpy array, got {type(ret[1])}")
-    return ret[0], "".join([chr(c) for c in ret[1] if c != 0])
-
-
-def _dominator_sig_repr(self: Feature, features: FuncSig) -> tuple[str, str]:
-    """
-    Returns a string representation of the dominator signature stored in a feature.
-    :param features: feature vector representing dominator signature
-    :return: string representation
-    """
-    ret = self._default_repr(features)
-    if not isinstance(ret[1], np.ndarray):
-        raise ValueError(f"Expected numpy array, got {type(ret[1])}")
-    return ret[0], hex(merge_uint32_to_int(ret[1]))
-
-
-def _vertex_taxonomy_repr(self: Feature, features: FuncSig) -> tuple[str, str]:
-    """
-    Returns a string representation of the vertex taxonomy histogram stored in a feature.
-    :param features: feature vector representing vertex taxonomy histogram
-    :return: string representation
-    """
-    ret = self._default_repr(features)
-    if not isinstance(ret[1], np.ndarray):
-        raise ValueError(f"Expected numpy array, got {type(ret[1])}")
-    return ret[0], str(
-        {
-            "Entry": ret[1][0],
-            "Exit": ret[1][1],
-            "Normal": ret[1][2],
-        }
-    )
-
-
-def _edge_taxonomy_repr(self: Feature, features: FuncSig) -> tuple[str, str]:
-    """
-    Returns a string representation of the edge taxonomy histogram stored in a feature.
-    :param features: feature vector representing edge taxonomy histogram
-    :return: string representation
-    """
-    ret = self._default_repr(features)
-    if not isinstance(ret[1], np.ndarray):
-        raise ValueError(f"Expected numpy array, got {type(ret[1])}")
-    return ret[0], str(
-        {
-            "Basis": ret[1][0],
-            "Back": ret[1][1],
-            "Forward": ret[1][2],
-            "Cross": ret[1][3],
-        }
-    )
-
-
-FEATURES = [
-    Feature(
-        "Cyclomatic Complexity", 1, lambda f: np.array(get_cyclomatic_complexity(f))
-    ),
-    Feature("Instruction Count", 1, lambda f: np.array(len(f.instructions))),
-    Feature("String Count", 1, lambda f: np.array(len(get_strings(f.view)[f.start]))),
-    Feature(
-        "Maximum String Length",
-        1,
-        lambda f: np.array(max(get_strings(f.view)[f.start], key=len)),
-    ),
-    Feature(
-        "Constants",
-        64,
-        lambda f: np.array(sorted(get_constants(f)), dtype=np.uint32)[:64],
-        _constants_repr,
-    ),
-    Feature(
-        "Strings",
-        512,
-        lambda f: np.frombuffer(
-            "".join(sorted(get_strings(f.view)[f.start])).encode("utf-8"), dtype=np.byte
-        )[:512],
-        _strings_repr,
-    ),
-    Feature(
-        "Instruction Histogram", NUM_INSTR_CATEGORIES, compute_instruction_histogram
-    ),
-    Feature(
-        "Dominator Signature",
-        32,
-        lambda f: split_int_to_uint32(dominator_signature(f), pad=32, wrap=True),
-        _dominator_sig_repr,
-    ),
-    Feature(
-        "Vertex Histogram", 3, compute_vertex_taxonomy_histogram, _vertex_taxonomy_repr
-    ),
-    Feature("Edge Histogram", 4, compute_edge_taxonomy_histogram, _edge_taxonomy_repr),
-]
-
-
-def extract_features(fn: Function) -> FuncSig:
-    """
-    Computes the feature vector for a function.
-    :param fn: function to compute feature vector for
-    :return: feature vector
-    """
-    return FuncSig(fn, np.concatenate([f(fn) for f in FEATURES]))
+    def extract_from_file(self, path: Path) -> BinarySignature:
+        """
+        Extracts features from all functions in a binary.
+        :param path: path to binary
+        :return: list of features
+        """
+        if not path.exists():
+            raise FileNotFoundError(f"File {path} does not exist")
+        with open_view(path) as bv:
+            return BinarySignature(
+                path=path,
+                functions=[self.extract(func) for func in bv.functions],
+                extraction_engine=self,
+            )

@@ -1,4 +1,5 @@
-import hashlib
+raise NotImplementedError()
+
 import logging
 import os
 import re
@@ -19,40 +20,16 @@ from tqdm import tqdm  # type: ignore
 
 from hashashin.utils import func2str
 from hashashin.utils import serialize_features
-from hashashin.utils import vec2hex
 from hashashin.utils import get_binaries
 from hashashin.feature_extractors import extract_features
 from hashashin.feature_extractors import get_strings
 
 if TYPE_CHECKING:
-    from hashashin.types import BinSig, FuncSig
+    from hashashin.classes import BinSig, FuncSig
 
 logging.basicConfig()
 logger = logging.getLogger(os.path.basename(__name__))
 SIGNATURE_LEN = 20
-
-
-def min_hash(
-    features: np.ndarray, sig_len: int = SIGNATURE_LEN, seed: int = 2023
-) -> str:
-    """
-    Generate a minhash signature for a given set of features.
-
-    :param features: a matrix of vectorized features
-    :param sig_len: the length of the minhash signature
-    :param seed: a seed for the random number generator
-    :return: a string representing the minhash signature
-    """
-    np.random.seed(seed)
-    # h(x) = (ax + b) % c
-    a = np.random.randint(0, 2**32 - 1, size=sig_len)
-    b = np.random.randint(0, 2**32 - 1, size=sig_len)
-    c = 4297922131  # prime number above 2**32-1
-
-    b = np.stack([np.stack([b] * features.shape[0])] * features.shape[1]).T
-    hashed_features = (np.tensordot(a, features, axes=0) + b) % c
-    minhash = hashed_features.min(axis=(1, 2))
-    return vec2hex(minhash)
 
 
 def hash_tagged(bv: BinaryView) -> Dict[str, Function]:
@@ -117,7 +94,7 @@ def hash_function(
     function: Function,
     h_planes: Optional[np.ndarray] = None,
     string_map=None,
-) -> FuncSig:
+) -> "FuncSig":
     """
     Hash a given function by "bucketing" basic blocks to capture a high level overview of their functionality, then
     performing a variation of the Weisfeiler Lehman graph similarity test on the labeled CFG.

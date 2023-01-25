@@ -32,8 +32,8 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     install_requires=[
         "tqdm",
-        "dill",
         "numpy",
+        "xxhash",
     ],
     extras_require={
         "dev": [
