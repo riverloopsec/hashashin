@@ -17,7 +17,13 @@ from binaryninja import BinaryView  # type: ignore
 from binaryninja import enums  # type: ignore
 from binaryninja import core_version
 from binaryninja import open_view
-from hashashin.classes import FunctionFeatures, AbstractFunction, BinaryNinjaFunction, BinjaFunction, BinarySignature
+from hashashin.classes import (
+    FunctionFeatures,
+    AbstractFunction,
+    BinaryNinjaFunction,
+    BinjaFunction,
+    BinarySignature,
+)
 from pathlib import Path
 
 logger = logging.getLogger(os.path.basename(__name__))
@@ -173,7 +179,7 @@ def compute_instruction_histogram(
             )
     for instr in fn.mlil_instructions:
         # https://youtrack.jetbrains.com/issue/PY-55734/IntEnum.value-is-not-recognized-as-a-property
-        vector[instr.operation.value: int] += 1
+        vector[instr.operation.value : int] += 1
     return vector
 
 
@@ -307,7 +313,9 @@ class BinjaFeatureExtractor(FeatureExtractor):
         :return: features
         """
         if not isinstance(function.function, BinaryNinjaFunction):
-            raise ValueError(f"Expected Binary Ninja function, got {type(function.function)}")
+            raise ValueError(
+                f"Expected Binary Ninja function, got {type(function.function)}"
+            )
         func: BinaryNinjaFunction = function.function
         return FunctionFeatures(
             extraction_engine=self,

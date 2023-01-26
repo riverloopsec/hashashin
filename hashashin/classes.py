@@ -16,6 +16,7 @@ from abc import ABC
 from hashashin.feature_extractors import FeatureExtractor
 
 from hashashin.utils import func2str
+
 logger = logging.getLogger(os.path.basename(__name__))
 
 
@@ -52,18 +53,21 @@ class FunctionFeatures:
 
     def asArray(self) -> npt.NDArray[np.uint32]:
         try:
-            return np.array([
-                self.cyclomatic_complexity,
-                self.num_instructions,
-                self.num_strings,
-                self.max_string_length,
-                self.dominator_signature,
-                *self.constants,
-                *self.strings,
-                *self.instruction_histogram,
-                *self.vertex_histogram,
-                *self.edge_histogram
-            ], dtype=np.uint32)
+            return np.array(
+                [
+                    self.cyclomatic_complexity,
+                    self.num_instructions,
+                    self.num_strings,
+                    self.max_string_length,
+                    self.dominator_signature,
+                    *self.constants,
+                    *self.strings,
+                    *self.instruction_histogram,
+                    *self.vertex_histogram,
+                    *self.edge_histogram,
+                ],
+                dtype=np.uint32,
+            )
         except ValueError as e:
             logger.error(f"Error while creating array for {self.function.name}")
             raise e
@@ -97,7 +101,7 @@ class BinarySignature:
 
     @staticmethod
     def min_hash(
-            features: npt.NDArray[np.uint32], sig_len: int = SIGNATURE_LEN, seed: int = 2023
+        features: npt.NDArray[np.uint32], sig_len: int = SIGNATURE_LEN, seed: int = 2023
     ) -> npt.NDArray[np.uint32]:
         """
         Generate a minhash signature for a given set of features.
@@ -108,8 +112,8 @@ class BinarySignature:
         :return: a string representing the minhash signature
         """
         random_state = np.random.RandomState(seed)
-        a = random_state.randint(0, 2 ** 32 - 1, size=sig_len)
-        b = random_state.randint(0, 2 ** 32 - 1, size=sig_len)
+        a = random_state.randint(0, 2**32 - 1, size=sig_len)
+        b = random_state.randint(0, 2**32 - 1, size=sig_len)
         c = 4297922131  # prime number above 2**32-1
 
         b = np.stack([np.stack([b] * features.shape[0])] * features.shape[1]).T
@@ -127,7 +131,9 @@ class BinarySignature:
         return zlib.compress(self.np_signature.tobytes())
 
     @staticmethod
-    def jaccard_similarity(sig1: npt.NDArray[np.uint32], sig2: npt.NDArray[np.uint32]) -> float:
+    def jaccard_similarity(
+        sig1: npt.NDArray[np.uint32], sig2: npt.NDArray[np.uint32]
+    ) -> float:
         """
         Calculate the jaccard similarity between two minhash signatures.
 

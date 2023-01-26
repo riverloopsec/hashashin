@@ -75,6 +75,7 @@ def hash_all(
         end="\r",
     )
     import shutil
+
     ts = shutil.get_terminal_size(fallback=(120, 50)).columns // 2
     for function in (pbar := tqdm(bv.functions, disable=not show_progress)):
         pbar.set_description(f"Hashing {func2str(function):{ts}.{ts}}")
@@ -203,8 +204,12 @@ def main():
                     try:
                         func = next(f for f in features if args.function in f)
                     except StopIteration:
-                        func = func2str(get_func_from_unknown(open_view(b), args.function))
-                    logger.info(f"Hash for {args.function}:\n{pp.pformat(features_to_dict(features[func]), sort_dicts=False)}")
+                        func = func2str(
+                            get_func_from_unknown(open_view(b), args.function)
+                        )
+                    logger.info(
+                        f"Hash for {args.function}:\n{pp.pformat(features_to_dict(features[func]), sort_dicts=False)}"
+                    )
                 continue
             except (ValueError, FileNotFoundError) as e:
                 logger.error(

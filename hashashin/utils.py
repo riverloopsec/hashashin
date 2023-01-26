@@ -65,7 +65,7 @@ def serialize_features(features: Dict[Function, FuncSig]) -> Dict[str, str]:
 
 
 def deserialize_features(
-        features: Dict[str, str], bv: BinaryView
+    features: Dict[str, str], bv: BinaryView
 ) -> Dict[Function, np.ndarray]:
     return {str2func(f, bv): hex2vec(v) for f, v in features.items()}
 
@@ -123,14 +123,15 @@ def get_binaries(path, bin_name=None, recursive=True, progress=False):
     binaries = []
     if not progress:
         print(
-            f"Iterating over {len(files)} files. If you see this, consider using --progress.", end='\r'
+            f"Iterating over {len(files)} files. If you see this, consider using --progress.",
+            end="\r",
         )
     elif len(files) == 1:
         progress = False
     for f in tqdm(
-            files,
-            disable=not progress,
-            desc=f"Gathering binaries in {os.path.relpath(path)}",
+        files,
+        disable=not progress,
+        desc=f"Gathering binaries in {os.path.relpath(path)}",
     ):
         if os.path.isfile(f):
             if "ELF" in magic.from_file(f):
@@ -210,7 +211,7 @@ def _grab_constant_from_list(l: List) -> Iterator[ConstantReference]:
         elif isinstance(param, (Variable, SSAVariable)):
             continue
         elif isinstance(
-                param, (HighLevelILConst, HighLevelILConstPtr, HighLevelILFloatConst)
+            param, (HighLevelILConst, HighLevelILConstPtr, HighLevelILFloatConst)
         ):
             is_ptr = isinstance(param, HighLevelILConstPtr)
             yield ConstantReference(
@@ -276,7 +277,7 @@ def hlil_operation_get_consts_recursive(operation: HighLevelILInstruction, silen
 
 
 def filter_address_operations(
-        instr: HighLevelILInstruction,
+    instr: HighLevelILInstruction,
 ) -> List[HighLevelILInstruction]:
     op = instr.operation
 
@@ -311,7 +312,7 @@ def filter_address_operations(
         return [instr.operands[1]]
     # calls are a special case, since second operand is already a list
     if (op == enums.HighLevelILOperation.HLIL_CALL) or (
-            op == enums.HighLevelILOperation.HLIL_TAILCALL
+        op == enums.HighLevelILOperation.HLIL_TAILCALL
     ):
         return instr.operands[1]
     return instr.operands

@@ -17,7 +17,9 @@ def get_features(view, func):
         except Exception as e:
             print(f"Error parsing comment: {e}")
     func_hash = hash_function(func)
-    func.set_comment_at(func.start, pp.pformat(features_to_dict(func_hash), sort_dicts=False))
+    func.set_comment_at(
+        func.start, pp.pformat(features_to_dict(func_hash), sort_dicts=False)
+    )
     print(f"Hash for {func2str(func)}:\n{vec2hex(func_hash)}")
 
 
@@ -26,9 +28,13 @@ def get_signature(view):
     print(f"Signature for {view.file.filename}:\n{sig}")
 
 
-PluginCommand.register_for_function("Hashashin Feature Extraction",
-                                    "Run hashashin's feature extraction for a given function.",
-                                    get_features)
-PluginCommand.register("Hashashin Signature Generation",
-                       "Run hashashin's signature generation for a given binary view.",
-                       get_signature)
+PluginCommand.register_for_function(
+    "Hashashin Feature Extraction",
+    "Run hashashin's feature extraction for a given function.",
+    get_features,
+)
+PluginCommand.register(
+    "Hashashin Signature Generation",
+    "Run hashashin's signature generation for a given binary view.",
+    get_signature,
+)
