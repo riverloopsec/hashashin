@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 import xxhash
-from sqlalchemy import (Column, ForeignKey, Integer, LargeBinary, String,
-                        create_engine)
+from sqlalchemy import Column, ForeignKey, Integer, LargeBinary, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, relationship, sessionmaker
 from sqlalchemy.orm.relationships import RelationshipProperty
@@ -24,7 +23,7 @@ SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
 class BinarySigModel(ORM_BASE):
     __tablename__ = "binaries"
     id = Column(Integer, primary_key=True)
-    hash = Column(Integer, unique=True, index=True)  # xxhash
+    hash = Column(LargeBinary, unique=True, index=True)
     path = Column(String)
     sig = Column(LargeBinary, nullable=True)
     functions: RelationshipProperty = relationship("FunctionFeatModel")
@@ -34,11 +33,19 @@ class BinarySigModel(ORM_BASE):
     def fromBinarySignature(cls, sig: BinarySignature) -> "BinarySigModel":
         with open(sig.path, "rb") as f:
             return cls(
-                hash=xxhash.xxh64(f.read()).intdigest(),
+                hash=xxhash.xxh64(f.read()).digest(),
                 path=sig.path.name,
                 sig=sig.signature,
-                extraction_engine=sig.extraction_engine,
+                extraction_engine=str(sig.extraction_engine),
             )
+
+    def __eq__(self, other: "BinarySigModel") -> bool:
+        return (
+            self.hash == other.hash
+            and self.path == other.path
+            and self.sig == other.sig
+            and self.extraction_engine == other.extraction_engine
+        )
 
 
 class FunctionFeatModel(ORM_BASE):
@@ -58,10 +65,10 @@ class FunctionFeatModel(ORM_BASE):
             # TODO: query the database for the binary_id
             raise ValueError("binary_id must be set")
         return cls(
-            bin_id = features.binary_id,
+            bin_id=features.binary_id,
             name=features.function.name,
             sig=features.signature,
-            extraction_engine=features.extraction_engine,
+            extraction_engine=str(features.extraction_engine),
         )
 
 
@@ -93,10 +100,13 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
             session.commit()
             session.refresh(func)
         return func
-    
+
     def __len__(self) -> int:
         with self.session() as session:
             return session.query(FunctionFeatModel).count()
+
+    def drop(self):
+        ORM_BASE.metadata.drop_all(self.engine)
 
 
 class BinarySignatureRepository:
@@ -123,7 +133,20 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
 
     def store_signature(self, signature: BinarySignature) -> BinarySigModel:
         binary = BinarySigModel.fromBinarySignature(signature)
+        # Check if the binary is already in the database
         with self.session() as session:
+            if session.query(BinarySigModel).filter_by(hash=binary.hash).first():
+                logger.debug("Binary already in database")
+                return
+        with self.session() as session:
+            dup = session.query(BinarySigModel).filter_by(hash=binary.hash).first()
+            if dup:
+                logger.warning("Binary already in database")
+                if dup != binary:
+                    raise ValueError(
+                        f"Binary stored in database differs, {dup} != {binary}"
+                    )
+                return dup
             session.add(binary)
             session.commit()
             session.refresh(binary)
@@ -155,3 +178,6 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
     def __len__(self) -> int:
         with self.session() as session:
             return session.query(BinarySigModel).count()
+
+    def drop(self):
+        ORM_BASE.metadata.drop_all(self.engine)

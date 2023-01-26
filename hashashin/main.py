@@ -5,16 +5,19 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Collection, Iterable, Optional, Union
+import argparse
 
 import magic
 from tqdm import tqdm
 
 from hashashin.classes import BinarySignature
-from hashashin.db import (BinarySignatureRepository, FunctionFeatureRepository,
-                          SQLAlchemyBinarySignatureRepository,
-                          SQLAlchemyFunctionFeatureRepository)
-from hashashin.feature_extractors import (BinjaFeatureExtractor,
-                                          FeatureExtractor)
+from hashashin.db import (
+    BinarySignatureRepository,
+    FunctionFeatureRepository,
+    SQLAlchemyBinarySignatureRepository,
+    SQLAlchemyFunctionFeatureRepository,
+)
+from hashashin.feature_extractors import BinjaFeatureExtractor, FeatureExtractor
 from hashashin.utils import get_binaries
 import logging
 
@@ -63,20 +66,21 @@ class HashashinApplication(ABC):
             for feat in sig.functionFeatureList:
                 feat.binary_id = binary.id
                 self.context.feature_repo.store_feature(feat)
-    
+
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.context})"
 
 
 class BinaryMatcherApplication(HashashinApplication):
-
     def _match(self, sig: BinarySignature) -> list[BinarySignature]:
         """
         Match a binary signature against the database.
         :param sig: signature to match
         :return: a list of matching signatures sorted by distance
         """
-        return self.context.binary_repo.match_signature(sig, self.context.sig_match_threshold)
+        return self.context.binary_repo.match_signature(
+            sig, self.context.sig_match_threshold
+        )
 
     def step(self) -> Iterable[tuple[BinarySignature, list[BinarySignature]]]:
         """
@@ -100,7 +104,7 @@ class BinaryMatcherApplication(HashashinApplication):
             for match in matches:
                 print(f"\t{match}")
             yield target_signature, matches
-    
+
     def run(self) -> list[tuple[BinarySignature, list[BinarySignature]]]:
         return list(self.step())
 
@@ -110,7 +114,6 @@ class BinaryMatcherApplication(HashashinApplication):
 
 
 class BinaryHasherApplication(HashashinApplication):
-
     def _hash(self, binary: Path) -> BinarySignature:
         """
         Hash a binary and save it to the database.
@@ -134,7 +137,7 @@ class BinaryHasherApplication(HashashinApplication):
             if self.context.save_to_db:
                 self.saveToDB(target_signature)
             yield target_signature
-    
+
     def run(self) -> list[BinarySignature]:
         return list(self.step())
 
@@ -145,42 +148,60 @@ class ApplicationFactory:
 
     def create(self) -> HashashinApplication:
         if self.context.task == Task.MATCH:
-            return BinaryMatcherApplication(
-                self.context.app_context
-            )
+            return BinaryMatcherApplication(self.context.app_context)
         elif self.context.task == Task.HASH:
-            return BinaryHasherApplication(
-                self.context.app_context
-            )
+            return BinaryHasherApplication(self.context.app_context)
         else:
             raise NotImplementedError
 
 
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    db_group = parser.add_argument_group()
-    db_group.add_argument(        
-        "--status", "-db", action="store_true", help="Print database status"
-    )
-    app_group = parser.add_argument_group()
-    app_group.add_argument(
-        "--task", "-t", type=str, choices=[t.value for t in Task])
-    app_group.add_argument("--target", "-b", type=str)
-    app_group.add_argument("--save", "-s", action="store_true")
-    app_group.add_argument("--threshold", "-r", type=int, default=0.5)
-    app_group.add_argument("--progress", "-p", action="store_true")
-    args = parser.parse_args()
-
-    if not (args.status or (args.task and args.target)):
-        parser.error("--status or --task and --target are required options")
-
+def main(args: Optional[argparse.Namespace] = None):
+    if args is None:
+        parser = argparse.ArgumentParser()
+        db_group = parser.add_argument_group("Database operations")
+        db_group.add_argument(
+            "--status", "-db", action="store_true", help="Print database status"
+        )
+        db_group.add_argument(
+            "--drop", action="store_true", help="Drop database tables"
+        )
+        app_group = parser.add_argument_group("Application operations")
+        app_group.add_argument(
+            "--task",
+            "-t",
+            type=str,
+            choices=[t.value for t in Task],
+            help="Application task",
+        )
+        app_group.add_argument(
+            "--target", "-b", type=str, help="Target binary or directory"
+        )
+        app_group.add_argument(
+            "--save", "-s", action="store_true", help="Save results to database"
+        )
+        app_group.add_argument(
+            "--threshold", "-r", type=int, default=0.5, help="Signature match threshold"
+        )
+        app_group.add_argument(
+            "--progress", "-p", action="store_true", help="Show progress bar"
+        )
+        args = parser.parse_args()
+        if not ((args.status or args.drop) or (args.task and args.target)):
+            parser.error("--status or --task and --target are required options")
 
     if args.status:
         print("Database status:")
         print(f"\t{len(SQLAlchemyBinarySignatureRepository())} signatures")
         print(f"\t{len(SQLAlchemyFunctionFeatureRepository())} features")
+        return
+
+    if args.drop:
+        print("Dropping database tables...")
+        SQLAlchemyBinarySignatureRepository().drop()
+        SQLAlchemyFunctionFeatureRepository().drop()
+        print("Done!")
+        args.drop, args.status = False, True
+        main(args)
         return
 
     factory = ApplicationFactory(

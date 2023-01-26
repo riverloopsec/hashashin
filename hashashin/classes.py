@@ -17,11 +17,12 @@ from hashashin.utils import split_int_to_uint32
 
 logger = logging.getLogger(os.path.basename(__name__))
 
+
 @dataclass
 class AbstractFunction(ABC):
     name: str
     function: BinaryNinjaFunction  # Union[BinaryNinjaFunction, GhidraFunction]
-    
+
 
 @dataclass
 class BinjaFunction(AbstractFunction):
@@ -68,6 +69,16 @@ class FunctionFeatures:
     # Reference used to set the foreign key in the database
     binary_id: Optional[int] = None
 
+    def _strings_to_array(self) -> np.ndarray:
+        logger.debug(
+            "Wasting space here, can shorten array by 256 bytes by using uint32"
+        )
+        strings = "\0".join(sorted(self.strings)).encode("utf-8")
+        strings = strings[: min(len(strings), 512)]
+        return np.pad(
+            np.frombuffer(strings, dtype=np.byte), (0, 512 - len(strings)), "constant"
+        )
+
     def asArray(self) -> npt.NDArray[np.uint32]:
         try:
             return np.array(
@@ -80,8 +91,11 @@ class FunctionFeatures:
                     *self.edge_histogram,
                     *self.instruction_histogram,
                     *split_int_to_uint32(self.dominator_signature, pad=32, wrap=True),
-                    *self.constants[:min(len(self.constants), 64)],
-                    *np.frombuffer("|".join(sorted(self.strings)[:min(len(self.strings), 512)]).encode("utf-8"), dtype=np.uint32),
+                    *(
+                        sorted(self.constants)[: min(len(self.constants), 64)]
+                        + [0] * max(0, 64 - len(self.constants))
+                    ),
+                    *self._strings_to_array(),
                 ],
                 dtype=np.uint32,
             )
@@ -110,7 +124,10 @@ class BinarySignature:
             raise FileNotFoundError(f"File {self.path} does not exist.")
         if not self.extraction_engine:
             self.extraction_engine = self.functionFeatureList[0].extraction_engine
-        if any(f.extraction_engine != self.extraction_engine for f in self.functionFeatureList):
+        if any(
+            f.extraction_engine != self.extraction_engine
+            for f in self.functionFeatureList
+        ):
             raise ValueError("All functions must have the same extraction engine.")
 
     @classmethod
@@ -142,7 +159,14 @@ class BinarySignature:
 
     @property
     def np_signature(self) -> npt.NDArray[np.uint32]:
-        return self.min_hash(np.array([f.asArray() for f in self.functionFeatureList]))
+        try:
+            return self.min_hash(
+                np.array([f.asArray() for f in self.functionFeatureList])
+            )
+        except Exception as e:
+            breakpoint()
+            logger.error(f"Error while creating signature for {self.path}")
+            raise e
 
     @property
     def signature(self) -> bytes:

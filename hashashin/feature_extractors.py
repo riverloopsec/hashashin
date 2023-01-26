@@ -15,9 +15,14 @@ from binaryninja import BinaryView  # type: ignore
 from binaryninja import enums  # type: ignore
 from binaryninja import core_version, open_view
 
-from hashashin.classes import (AbstractFunction, BinaryNinjaFunction,
-                               BinarySignature, BinjaFunction,
-                               FunctionFeatures, FeatureExtractor)
+from hashashin.classes import (
+    AbstractFunction,
+    BinaryNinjaFunction,
+    BinarySignature,
+    BinjaFunction,
+    FunctionFeatures,
+    FeatureExtractor,
+)
 
 logger = logging.getLogger(os.path.basename(__name__))
 
@@ -292,8 +297,14 @@ class BinjaFeatureExtractor(FeatureExtractor):
         if not path.exists():
             raise FileNotFoundError(f"File {path} does not exist")
         with open_view(path) as bv:
+            logger.warning(
+                "Binary view might close here, deal with it better if it does"
+            )
             return BinarySignature(
                 path=path,
-                functionFeatureList=[self.extract(BinjaFunction.fromFunctionRef(func)) for func in bv.functions],
+                functionFeatureList=[
+                    self.extract(BinjaFunction.fromFunctionRef(func))
+                    for func in bv.functions
+                ],
                 extraction_engine=self,
             )

@@ -32,6 +32,7 @@ from tqdm import tqdm  # type: ignore
 
 logger = logging.getLogger(os.path.basename(__name__))
 
+
 def get_binaries(path, bin_name=None, recursive=True, progress=False):
     """Get all binaries in a directory"""
     if os.path.isfile(path):
@@ -58,10 +59,13 @@ def get_binaries(path, bin_name=None, recursive=True, progress=False):
                 binaries.append(f)
     return binaries
 
+
 def split_int_to_uint32(x: int, pad=None, wrap=False) -> npt.NDArray[np.uint32]:
     """Split very large integers into array of uint32 values. Lowest bits are first."""
     if x < np.iinfo(np.uint32).max:
-        return np.array([x], dtype=np.uint32)
+        if pad is None:
+            return np.array([x], dtype=np.uint32)
+        return np.pad([x], (0, pad - 1), "constant", constant_values=(0, 0))
     if pad is None:
         pad = int(np.ceil(len(bin(x)) / 32))
     elif pad < int(np.ceil(len(bin(x)) / 32)):
