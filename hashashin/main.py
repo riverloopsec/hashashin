@@ -1,22 +1,30 @@
-from hashashin.feature_extractors import FeatureExtractor, BinjaFeatureExtractor
-from hashashin.db import (
-    FunctionFeatureRepository,
-    BinarySignatureRepository,
-    SQLAlchemyFunctionFeatureRepository,
-    SQLAlchemyBinarySignatureRepository,
-)
-from hashashin.classes import BinarySignature
+import glob
+import os
+from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
-from abc import ABC
 from pathlib import Path
-from typing import Optional
+from typing import Collection, Iterable, Optional, Union
+
+import magic
+from tqdm import tqdm
+
+from hashashin.classes import BinarySignature
+from hashashin.db import (BinarySignatureRepository, FunctionFeatureRepository,
+                          SQLAlchemyBinarySignatureRepository,
+                          SQLAlchemyFunctionFeatureRepository)
+from hashashin.feature_extractors import (BinjaFeatureExtractor,
+                                          FeatureExtractor)
 from hashashin.utils import get_binaries
+import logging
+
+
+logger = logging.getLogger(os.path.basename(__file__))
 
 
 class Task(Enum):
-    HASH = 1
-    MATCH = 2
+    HASH = "hash"
+    MATCH = "match"
 
 
 @dataclass
@@ -24,11 +32,16 @@ class HashashinApplicationContext:
     extractor: FeatureExtractor
     feature_repo: FunctionFeatureRepository
     binary_repo: BinarySignatureRepository
+    target_path: Optional[Path]
+    save_to_db: Optional[bool]
+    sig_match_threshold: float = 0.5
+    # feat_match_threshold: int = 0
+    progress: bool = False
 
 
 @dataclass
 class HashashinFactoryContext:
-    context: HashashinApplicationContext
+    app_context: HashashinApplicationContext
     task: Task
 
 
@@ -39,51 +52,64 @@ class HashashinApplication(ABC):
     def run(self):
         raise NotImplementedError
 
+    def saveToDB(
+        self,
+        signatures: Union[Collection[BinarySignature], BinarySignature],
+    ):
+        if isinstance(signatures, BinarySignature):
+            signatures = [signatures]
+        for sig in signatures:
+            binary = self.context.binary_repo.store_signature(sig)
+            for feat in sig.functionFeatureList:
+                feat.binary_id = binary.id
+                self.context.feature_repo.store_feature(feat)
+    
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self.context})"
+
 
 class BinaryMatcherApplication(HashashinApplication):
-    def __init__(
-        self, context: HashashinApplicationContext, target_path: Optional[Path] = None
-    ):
-        super().__init__(context)
-        self.target_path = target_path
 
-    def _match(self, sig: BinarySignature, threshold: int = 0) -> list[BinarySignature]:
+    def _match(self, sig: BinarySignature) -> list[BinarySignature]:
         """
         Match a binary signature against the database.
         :param sig: signature to match
-        :param threshold: distance threshold to match
-        :return:
+        :return: a list of matching signatures sorted by distance
         """
-        return self.context.binary_repo.match_signature(sig, threshold)
+        return self.context.binary_repo.match_signature(sig, self.context.sig_match_threshold)
 
-    def run(self):
-        if self.target_path is None:
+    def step(self) -> Iterable[tuple[BinarySignature, list[BinarySignature]]]:
+        """
+        Match all binaries in the target path against the database.
+        :return: a generator of tuples containing the target signature and a list of matches sorted by distance
+        """
+        if self.context.target_path is None:
             raise ValueError("No target path specified")
-        if not self.target_path.exists():
+        if not self.context.target_path.exists():
             raise ValueError("Target path does not exist")
-        targets = get_binaries(self.target_path)
-        matches = []
-        target_signature = self.context.extractor.extract_from_file(self.target_path)
-        matches = self._match(target_signature)
-        if len(matches) == 0:
-            print(f"No matches found for {self.target_path}")
-            return
-        print(f"Matches for {self.target_path}:")
-        for match in matches:
-            print(f"\t{match}")
-        return matches
+        targets = get_binaries(self.context.target_path)
+        for target_path in targets:
+            target_signature = self.context.extractor.extract_from_file(target_path)
+            if self.context.save_to_db:
+                self.saveToDB(target_signature)
+            matches = self._match(target_signature)
+            if len(matches) == 0:
+                print(f"No matches found for {target_path}")
+                continue
+            print(f"Matches for {target_path}:")
+            for match in matches:
+                print(f"\t{match}")
+            yield target_signature, matches
+    
+    def run(self) -> list[tuple[BinarySignature, list[BinarySignature]]]:
+        return list(self.step())
 
     def match_target(self, target: Path):
-        self.target_path = target
+        self.context.target_path = target
         return self.run()
 
 
 class BinaryHasherApplication(HashashinApplication):
-    def __init__(
-        self, context: HashashinApplicationContext, target_binary: Optional[Path]
-    ):
-        super().__init__(context)
-        self.target_binary = target_binary
 
     def _hash(self, binary: Path) -> BinarySignature:
         """
@@ -92,72 +118,89 @@ class BinaryHasherApplication(HashashinApplication):
         :return: signature of the binary
         """
         sig = self.context.extractor.extract_from_file(binary)
-        if self.context.feature_repo is not None:
-            self.context.feature_repo.store_features(sig.features)
-        if self.context.binary_repo is not None:
-            self.context.binary_repo.store_signature(sig)
+        if self.context.save_to_db:
+            self.saveToDB(sig)
         return sig
 
-    def run(self):
-        if self.target_binary is None:
+    def step(self) -> Iterable[BinarySignature]:
+        if self.context.target_path is None:
             raise ValueError("No target binary specified")
-        if not self.target_binary.exists():
+        if not self.context.target_path.exists():
             raise ValueError("Target binary does not exist")
-        if self.target_binary.is_dir():
-            for binary in self.target_binary.iterdir():
-                if binary.is_file():
-                    self._hash(binary)
-        else:
-            self._hash(self.target_binary)
+        targets = get_binaries(self.context.target_path, progress=self.context.progress)
+        logger.info(f"Hashing {len(targets)} binaries")
+        for target_path in targets:
+            target_signature = self.context.extractor.extract_from_file(target_path)
+            if self.context.save_to_db:
+                self.saveToDB(target_signature)
+            yield target_signature
+    
+    def run(self) -> list[BinarySignature]:
+        return list(self.step())
 
 
-class HashashinFactory:
+class ApplicationFactory:
     def __init__(self, context: HashashinFactoryContext):
         self.context = context
 
-    def create(self) -> BinaryMatcherApplication:
+    def create(self) -> HashashinApplication:
         if self.context.task == Task.MATCH:
             return BinaryMatcherApplication(
-                feature_extractor=self.context.extractor,
-                feature_repository=self.context.feature_repo,
-                binary_repository=self.context.binary_repo,
+                self.context.app_context
             )
         elif self.context.task == Task.HASH:
-            return BinaryMatcherApplication(
-                feature_extractor=self.context.extractor,
-                feature_repository=self.context.feature_repo,
-                binary_repository=self.context.binary_repo,
+            return BinaryHasherApplication(
+                self.context.app_context
             )
         else:
             raise NotImplementedError
 
 
-if __name__ == "__main__":
+def main():
     import argparse
-    import os
-    from hashashin.utils import get_binja_path
-    from hashashin.db import init_db
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--task", "-t", type=str, choices=["hash", "match"], required=True
+    db_group = parser.add_argument_group()
+    db_group.add_argument(        
+        "--status", "-db", action="store_true", help="Print database status"
     )
-    parser.add_argument("--target", "-b", type=str, required=True)
-    parser.add_argument("--db", "-d", type=str, required=True)
-    parser.add_argument("--binja", "-p", type=str, required=True)
-    parser.add_argument("--threshold", "-r", type=int, default=0)
+    app_group = parser.add_argument_group()
+    app_group.add_argument(
+        "--task", "-t", type=str, choices=[t.value for t in Task])
+    app_group.add_argument("--target", "-b", type=str)
+    app_group.add_argument("--save", "-s", action="store_true")
+    app_group.add_argument("--threshold", "-r", type=int, default=0.5)
+    app_group.add_argument("--progress", "-p", action="store_true")
     args = parser.parse_args()
 
-    binja_path = get_binja_path(args.binja)
-    if binja_path is None:
-        raise ValueError("Could not find Binary Ninja executable")
+    if not (args.status or (args.task and args.target)):
+        parser.error("--status or --task and --target are required options")
 
-    init_db(args.db)
-    extractor = BinjaFeatureExtractor(binja_path)
-    feature_repo = SQLAlchemyFunctionFeatureRepository()
-    binary_repo = SQLAlchemyBinarySignatureRepository()
-    context = HashashinApplicationContext(extractor, feature_repo, binary_repo)
-    factory_context = HashashinFactoryContext(context, Task[args.task.upper()])
-    factory = HashashinFactory(factory_context)
+
+    if args.status:
+        print("Database status:")
+        print(f"\t{len(SQLAlchemyBinarySignatureRepository())} signatures")
+        print(f"\t{len(SQLAlchemyFunctionFeatureRepository())} features")
+        return
+
+    factory = ApplicationFactory(
+        HashashinFactoryContext(
+            HashashinApplicationContext(
+                extractor=BinjaFeatureExtractor(),
+                feature_repo=SQLAlchemyFunctionFeatureRepository(),
+                binary_repo=SQLAlchemyBinarySignatureRepository(),
+                target_path=Path(args.target),
+                save_to_db=args.save,
+                sig_match_threshold=args.threshold,
+                progress=args.progress,
+            ),
+            task=Task(args.task),
+        )
+    )
     app = factory.create()
     app.run()
+    print("Done!")
+
+
+if __name__ == "__main__":
+    main()

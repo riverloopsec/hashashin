@@ -2,24 +2,23 @@ import csv
 import json
 import logging
 import os
-from pathlib import Path
-from typing import Optional
-from typing import Union
-from typing import Any, List
-from enum import Enum
 from dataclasses import dataclass
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, sessionmaker, relationship
-from sqlalchemy.orm.relationships import RelationshipProperty
-from sqlalchemy import create_engine
-from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary
-from hashashin.classes import BinarySignature, FunctionFeatures
+from enum import Enum
+from pathlib import Path
+from typing import Any, List, Optional, Union
 
 import xxhash
+from sqlalchemy import (Column, ForeignKey, Integer, LargeBinary, String,
+                        create_engine)
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import Session, relationship, sessionmaker
+from sqlalchemy.orm.relationships import RelationshipProperty
+
+from hashashin.classes import BinarySignature, FunctionFeatures
 
 logger = logging.getLogger(os.path.basename(__name__))
 ORM_BASE: Any = declarative_base()
-SIG_DB_PATH = Path(__file__).parent / "sig_db.sqlite3"
+SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
 
 
 class BinarySigModel(ORM_BASE):
@@ -55,8 +54,11 @@ class FunctionFeatModel(ORM_BASE):
 
     @classmethod
     def fromFunctionFeatures(cls, features: FunctionFeatures) -> "FunctionFeatModel":
-        logger.warning("Table entry may not have bin_id fk set correctly.")
+        if features.binary_id is None:
+            # TODO: query the database for the binary_id
+            raise ValueError("binary_id must be set")
         return cls(
+            bin_id = features.binary_id,
             name=features.function.name,
             sig=features.signature,
             extraction_engine=features.extraction_engine,
@@ -84,11 +86,17 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
         ORM_BASE.metadata.create_all(self.engine)
         self.session = sessionmaker(bind=self.engine)
 
-    def store_feature(self, features: FunctionFeatures):
+    def store_feature(self, features: FunctionFeatures) -> FunctionFeatModel:
         func = FunctionFeatModel.fromFunctionFeatures(features)
         with self.session() as session:
             session.add(func)
             session.commit()
+            session.refresh(func)
+        return func
+    
+    def __len__(self) -> int:
+        with self.session() as session:
+            return session.query(FunctionFeatModel).count()
 
 
 class BinarySignatureRepository:
@@ -113,11 +121,13 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
         ORM_BASE.metadata.create_all(self.engine)
         self.session = sessionmaker(bind=self.engine)
 
-    def store_signature(self, signature: BinarySignature):
+    def store_signature(self, signature: BinarySignature) -> BinarySigModel:
         binary = BinarySigModel.fromBinarySignature(signature)
         with self.session() as session:
             session.add(binary)
             session.commit()
+            session.refresh(binary)
+        return binary
 
     def match_signature(
         self, signature: BinarySignature, threshold: float = 0.5
@@ -141,3 +151,7 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
                 for sig in sorted_signatures
                 if sig.sig.similarity(signature.signature) > threshold
             ]
+
+    def __len__(self) -> int:
+        with self.session() as session:
+            return session.query(BinarySigModel).count()

@@ -1,76 +1,27 @@
 from __future__ import annotations
+
 import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Callable
-from typing import Union
-from typing import Annotated
-from typing import Optional
-from typing import TYPE_CHECKING
 from enum import Enum
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Callable, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
 from binaryninja import BasicBlock  # type: ignore
 from binaryninja import BinaryView  # type: ignore
 from binaryninja import enums  # type: ignore
-from binaryninja import core_version
-from binaryninja import open_view
-from hashashin.classes import (
-    FunctionFeatures,
-    AbstractFunction,
-    BinaryNinjaFunction,
-    BinjaFunction,
-    BinarySignature,
-)
-from pathlib import Path
+from binaryninja import core_version, open_view
+
+from hashashin.classes import (AbstractFunction, BinaryNinjaFunction,
+                               BinarySignature, BinjaFunction,
+                               FunctionFeatures, FeatureExtractor)
 
 logger = logging.getLogger(os.path.basename(__name__))
 
 NUM_INSTR_CATEGORIES = len(enums.MediumLevelILOperation.__members__)
-
-
-# TODO: create Function class to replace binja function
-class FeatureExtractor:
-    version: str
-
-    def extract(self, func: AbstractFunction) -> FunctionFeatures:
-        raise NotImplementedError
-
-    def extract_from_file(self, path: Path) -> BinarySignature:
-        raise NotImplementedError
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.version})"
-
-
-def split_int_to_uint32(x: int, pad=None, wrap=False) -> npt.NDArray[np.uint32]:
-    """Split very large integers into array of uint32 values. Lowest bits are first."""
-    if x < np.iinfo(np.uint32).max:
-        return np.array([x], dtype=np.uint32)
-    if pad is None:
-        pad = int(np.ceil(len(bin(x)) / 32))
-    elif pad < int(np.ceil(len(bin(x)) / 32)):
-        if wrap:
-            logger.warning(f"Padding is too small for number {x}, wrapping")
-            x = x % (2 ** (32 * pad))
-        else:
-            raise ValueError("Padding is too small for number")
-    ret = np.array([(x >> (32 * i)) & 0xFFFFFFFF for i in range(pad)], dtype=np.uint32)
-    assert merge_uint32_to_int(ret) == x, f"{merge_uint32_to_int(ret)} != {x}"
-    if merge_uint32_to_int(ret) != x:
-        logger.warning(f"{merge_uint32_to_int(ret)} != {x}")
-        raise ValueError("Splitting integer failed")
-    return ret
-
-
-def merge_uint32_to_int(x: npt.NDArray[np.uint32]) -> int:
-    """Merge array of uint32 values into a single integer. Lowest bits first."""
-    ret = 0
-    for i, v in enumerate(x):
-        ret |= int(v) << (32 * i)
-    return ret
 
 
 def compute_cyclomatic_complexity(fn: BinaryNinjaFunction) -> int:
@@ -179,7 +130,7 @@ def compute_instruction_histogram(
             )
     for instr in fn.mlil_instructions:
         # https://youtrack.jetbrains.com/issue/PY-55734/IntEnum.value-is-not-recognized-as-a-property
-        vector[instr.operation.value : int] += 1
+        vector[instr.operation.value] += 1
     return vector
 
 
@@ -323,7 +274,7 @@ class BinjaFeatureExtractor(FeatureExtractor):
             cyclomatic_complexity=compute_cyclomatic_complexity(func),
             num_instructions=len(list(func.instructions)),
             num_strings=len(get_fn_strings(func)),
-            max_string_length=len(max(get_fn_strings(func), key=len)),
+            max_string_length=len(max(get_fn_strings(func), key=len, default="")),
             constants=sorted(compute_constants(func)),
             strings=sorted(get_fn_strings(func)),
             instruction_histogram=compute_instruction_histogram(func),
@@ -343,6 +294,6 @@ class BinjaFeatureExtractor(FeatureExtractor):
         with open_view(path) as bv:
             return BinarySignature(
                 path=path,
-                functions=[self.extract(func) for func in bv.functions],
+                functionFeatureList=[self.extract(BinjaFunction.fromFunctionRef(func)) for func in bv.functions],
                 extraction_engine=self,
             )

@@ -13,27 +13,42 @@ from dataclasses import dataclass
 from binaryninja import Function as BinaryNinjaFunction  # type: ignore
 from binaryninja import BinaryView  # type: ignore
 from abc import ABC
-from hashashin.feature_extractors import FeatureExtractor
-
-from hashashin.utils import func2str
+from hashashin.utils import split_int_to_uint32
 
 logger = logging.getLogger(os.path.basename(__name__))
-
 
 @dataclass
 class AbstractFunction(ABC):
     name: str
-    function: Union[BinaryNinjaFunction]
-
+    function: BinaryNinjaFunction  # Union[BinaryNinjaFunction, GhidraFunction]
+    
 
 @dataclass
 class BinjaFunction(AbstractFunction):
+    # TODO: change from dataclass to regular class
     name: str
     function: BinaryNinjaFunction
 
+    @staticmethod
+    def binja2str(function: BinaryNinjaFunction) -> str:
+        return f"{function} @ 0x{function.start:X}"
+
     @classmethod
     def fromFunctionRef(cls, function: BinaryNinjaFunction) -> "BinjaFunction":
-        return cls(func2str(function), function)
+        return cls(cls.binja2str(function), function)
+
+
+class FeatureExtractor:
+    version: str
+
+    def extract(self, func: AbstractFunction) -> "FunctionFeatures":
+        raise NotImplementedError
+
+    def extract_from_file(self, path: Path) -> "BinarySignature":
+        raise NotImplementedError
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.version})"
 
 
 @dataclass
@@ -50,6 +65,8 @@ class FunctionFeatures:
     dominator_signature: int
     vertex_histogram: list[int]
     edge_histogram: list[int]
+    # Reference used to set the foreign key in the database
+    binary_id: Optional[int] = None
 
     def asArray(self) -> npt.NDArray[np.uint32]:
         try:
@@ -59,16 +76,17 @@ class FunctionFeatures:
                     self.num_instructions,
                     self.num_strings,
                     self.max_string_length,
-                    self.dominator_signature,
-                    *self.constants,
-                    *self.strings,
-                    *self.instruction_histogram,
                     *self.vertex_histogram,
                     *self.edge_histogram,
+                    *self.instruction_histogram,
+                    *split_int_to_uint32(self.dominator_signature, pad=32, wrap=True),
+                    *self.constants[:min(len(self.constants), 64)],
+                    *np.frombuffer("|".join(sorted(self.strings)[:min(len(self.strings), 512)]).encode("utf-8"), dtype=np.uint32),
                 ],
                 dtype=np.uint32,
             )
-        except ValueError as e:
+        except Exception as e:
+            breakpoint()
             logger.error(f"Error while creating array for {self.function.name}")
             raise e
 
@@ -84,15 +102,15 @@ class FunctionFeatures:
 class BinarySignature:
     SIGNATURE_LEN = 20
     path: Path
-    functions: list[FunctionFeatures]
+    functionFeatureList: list[FunctionFeatures]
     extraction_engine: FeatureExtractor
 
     def __post_init__(self):
         if not self.path.exists():
             raise FileNotFoundError(f"File {self.path} does not exist.")
         if not self.extraction_engine:
-            self.extraction_engine = self.functions[0].extraction_engine
-        if any(f.extraction_engine != self.extraction_engine for f in self.functions):
+            self.extraction_engine = self.functionFeatureList[0].extraction_engine
+        if any(f.extraction_engine != self.extraction_engine for f in self.functionFeatureList):
             raise ValueError("All functions must have the same extraction engine.")
 
     @classmethod
@@ -124,7 +142,7 @@ class BinarySignature:
 
     @property
     def np_signature(self) -> npt.NDArray[np.uint32]:
-        return self.min_hash(np.array([f.asArray() for f in self.functions]))
+        return self.min_hash(np.array([f.asArray() for f in self.functionFeatureList]))
 
     @property
     def signature(self) -> bytes:
