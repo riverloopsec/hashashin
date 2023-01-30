@@ -34,6 +34,7 @@ setuptools.setup(
         "tqdm",
         "numpy",
         "xxhash",
+        "cbor2",
     ],
     extras_require={
         "dev": [
@@ -47,6 +48,7 @@ setuptools.setup(
     entry_points={
         "console_scripts": [
             "hashashin = hashashin.main:main",
+            "flowslicer = flowslicer.flowslicer:Main",
         ]
     },
 )
