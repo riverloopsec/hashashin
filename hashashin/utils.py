@@ -3,31 +3,11 @@ import glob
 import json
 import logging
 import os
-import zlib
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Set
-from typing import Iterator
-from typing import Union
-from typing import TYPE_CHECKING
 
 import binaryninja  # type: ignore
 import magic
 import numpy as np
 import numpy.typing as npt
-from binaryninja import BinaryView
-from binaryninja import ConstantReference
-from binaryninja import Function
-from binaryninja import HighLevelILConst
-from binaryninja import HighLevelILConstPtr
-from binaryninja import HighLevelILFloatConst
-from binaryninja import HighLevelILImport
-from binaryninja import HighLevelILInstruction
-from binaryninja import HighLevelILStructField
-from binaryninja import SSAVariable
-from binaryninja import Variable
-from binaryninja import enums
 from tqdm import tqdm  # type: ignore
 
 logger = logging.getLogger(os.path.basename(__name__))

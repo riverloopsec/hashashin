@@ -5,7 +5,8 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Union, Collection
+from abc import ABC
 
 import xxhash
 from sqlalchemy import Column, ForeignKey, Integer, LargeBinary, String, create_engine
@@ -39,7 +40,9 @@ class BinarySigModel(ORM_BASE):
                 extraction_engine=str(sig.extraction_engine),
             )
 
-    def __eq__(self, other: "BinarySigModel") -> bool:
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, BinarySigModel):
+            return False
         return (
             self.hash == other.hash
             and self.path == other.path
@@ -72,7 +75,38 @@ class FunctionFeatModel(ORM_BASE):
         )
 
 
+class RepositoryType(Enum):
+    NONE = 0
+    SQLALCHEMY = 1
+
+
+@dataclass
+class RepositoryConfig(ABC):
+    db_type: tuple[RepositoryType, RepositoryType] = (
+        RepositoryType.NONE, RepositoryType.NONE
+    )
+
+
+class BinarySignatureRepository:
+    config: RepositoryConfig
+
+    def store_signature(self, binary: BinarySignature):
+        raise NotImplementedError
+
+    def store_signatures(self, binaries: List[BinarySignature]):
+        for binary in binaries:
+            self.store_signature(binary)
+
+    def match_signature(
+        self, signature: BinarySignature, threshold: float = 0.5
+    ) -> list[BinarySignature]:
+        """Return all matching signatures with a similarity above the threshold."""
+        raise NotImplementedError
+
+
 class FunctionFeatureRepository:
+    config: RepositoryConfig
+
     def store_feature(self, features: FunctionFeatures):
         raise NotImplementedError
 
@@ -82,8 +116,14 @@ class FunctionFeatureRepository:
 
 
 @dataclass
-class SQLAlchemyConfig:
+class SQLAlchemyConfig(RepositoryConfig):
+    db_type = (RepositoryType.SQLALCHEMY, RepositoryType.SQLALCHEMY)
     db_path: str = f"sqlite:///{SIG_DB_PATH}"
+
+    # def __eq__(self, other) -> bool:
+    #     if not isinstance(other, SQLAlchemyConfig):
+    #         return False
+    #     return self.db_type == other.db_type and self.db_path == other.db_path
 
 
 class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
@@ -109,21 +149,6 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
         ORM_BASE.metadata.drop_all(self.engine)
 
 
-class BinarySignatureRepository:
-    def store_signature(self, binary: BinarySignature):
-        raise NotImplementedError
-
-    def store_signatures(self, binaries: List[BinarySignature]):
-        for binary in binaries:
-            self.store_signature(binary)
-
-    def match_signature(
-        self, signature: BinarySignature, threshold: float = 0.5
-    ) -> list[BinarySignature]:
-        """Return all matching signatures with a similarity above the threshold."""
-        raise NotImplementedError
-
-
 class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
     def __init__(self, db_config: SQLAlchemyConfig = SQLAlchemyConfig()):
         self.config = db_config
@@ -134,10 +159,6 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
     def store_signature(self, signature: BinarySignature) -> BinarySigModel:
         binary = BinarySigModel.fromBinarySignature(signature)
         # Check if the binary is already in the database
-        with self.session() as session:
-            if session.query(BinarySigModel).filter_by(hash=binary.hash).first():
-                logger.debug("Binary already in database")
-                return
         with self.session() as session:
             dup = session.query(BinarySigModel).filter_by(hash=binary.hash).first()
             if dup:
@@ -181,3 +202,43 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
 
     def drop(self):
         ORM_BASE.metadata.drop_all(self.engine)
+
+
+class HashRepository:
+    @staticmethod
+    def _bin_repo_type_to_class(repo_type: RepositoryType, config: Optional[RepositoryConfig]) -> \
+            BinarySignatureRepository:
+        if repo_type == RepositoryType.SQLALCHEMY:
+            if config is None:
+                return SQLAlchemyBinarySignatureRepository(SQLAlchemyConfig())
+            if isinstance(config, SQLAlchemyConfig):
+                return SQLAlchemyBinarySignatureRepository(config)
+            raise ValueError(f"Invalid config type {type(config)}")
+        raise NotImplementedError(f"Repository type {repo_type} not implemented")
+
+    @staticmethod
+    def _func_repo_type_to_class(repo_type: RepositoryType, config: Optional[RepositoryConfig]) -> \
+            FunctionFeatureRepository:
+        if repo_type == RepositoryType.SQLALCHEMY:
+            if config is None:
+                return SQLAlchemyFunctionFeatureRepository(SQLAlchemyConfig())
+            if isinstance(config, SQLAlchemyConfig):
+                return SQLAlchemyFunctionFeatureRepository(config)
+            raise ValueError(f"Invalid config type {type(config)}")
+        raise NotImplementedError(f"Repository type {repo_type} not implemented")
+
+    def __init__(self, repo_type: RepositoryType = RepositoryType.SQLALCHEMY, db_config: Optional[RepositoryConfig] = None):
+        self.binary_repo: BinarySignatureRepository = self._bin_repo_type_to_class(repo_type, db_config)
+        self.function_repo: FunctionFeatureRepository = self._func_repo_type_to_class(repo_type, db_config)
+        if self.binary_repo.config != self.function_repo.config:
+            raise ValueError("Binary and Function repository must have the same config")
+        self.db_config = self.binary_repo.config
+
+    def save(self, signatures: Union[Collection[BinarySignature], BinarySignature]):
+        if isinstance(signatures, BinarySignature):
+            signatures = [signatures]
+        for sig in signatures:
+            binary = self.binary_repo.store_signature(sig)
+            for feat in sig.functionFeatureList:
+                feat.binary_id = binary.id
+                self.function_repo.store_feature(feat)

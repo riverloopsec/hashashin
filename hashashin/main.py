@@ -16,6 +16,7 @@ from hashashin.db import (
     FunctionFeatureRepository,
     SQLAlchemyBinarySignatureRepository,
     SQLAlchemyFunctionFeatureRepository,
+    HashRepository,
 )
 from hashashin.feature_extractors import BinjaFeatureExtractor, FeatureExtractor
 from hashashin.utils import get_binaries
@@ -33,8 +34,7 @@ class Task(Enum):
 @dataclass
 class HashashinApplicationContext:
     extractor: FeatureExtractor
-    feature_repo: FunctionFeatureRepository
-    binary_repo: BinarySignatureRepository
+    hash_repo: HashRepository
     target_path: Optional[Path]
     save_to_db: Optional[bool]
     sig_match_threshold: float = 0.5
@@ -55,18 +55,6 @@ class HashashinApplication(ABC):
     def run(self):
         raise NotImplementedError
 
-    def saveToDB(
-        self,
-        signatures: Union[Collection[BinarySignature], BinarySignature],
-    ):
-        if isinstance(signatures, BinarySignature):
-            signatures = [signatures]
-        for sig in signatures:
-            binary = self.context.binary_repo.store_signature(sig)
-            for feat in sig.functionFeatureList:
-                feat.binary_id = binary.id
-                self.context.feature_repo.store_feature(feat)
-
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.context})"
 
@@ -78,7 +66,7 @@ class BinaryMatcherApplication(HashashinApplication):
         :param sig: signature to match
         :return: a list of matching signatures sorted by distance
         """
-        return self.context.binary_repo.match_signature(
+        return self.context.hash_repo.binary_repo.match_signature(
             sig, self.context.sig_match_threshold
         )
 
@@ -95,7 +83,7 @@ class BinaryMatcherApplication(HashashinApplication):
         for target_path in targets:
             target_signature = self.context.extractor.extract_from_file(target_path)
             if self.context.save_to_db:
-                self.saveToDB(target_signature)
+                self.context.hash_repo.save(target_signature)
             matches = self._match(target_signature)
             if len(matches) == 0:
                 print(f"No matches found for {target_path}")
@@ -122,7 +110,7 @@ class BinaryHasherApplication(HashashinApplication):
         """
         sig = self.context.extractor.extract_from_file(binary)
         if self.context.save_to_db:
-            self.saveToDB(sig)
+            self.context.hash_repo.save(sig)
         return sig
 
     def step(self) -> Iterable[BinarySignature]:
@@ -135,7 +123,7 @@ class BinaryHasherApplication(HashashinApplication):
         for target_path in targets:
             target_signature = self.context.extractor.extract_from_file(target_path)
             if self.context.save_to_db:
-                self.saveToDB(target_signature)
+                self.context.hash_repo.save(target_signature)
             yield target_signature
 
     def run(self) -> list[BinarySignature]:
@@ -170,7 +158,7 @@ def main(args: Optional[argparse.Namespace] = None):
             "--task",
             "-t",
             type=str,
-            choices=[t.value for t in Task],
+            choices=[t.value for t in Task if isinstance(t.value, str)],  # mypy type fix
             help="Application task",
         )
         app_group.add_argument(
@@ -208,8 +196,7 @@ def main(args: Optional[argparse.Namespace] = None):
         HashashinFactoryContext(
             HashashinApplicationContext(
                 extractor=BinjaFeatureExtractor(),
-                feature_repo=SQLAlchemyFunctionFeatureRepository(),
-                binary_repo=SQLAlchemyBinarySignatureRepository(),
+                hash_repo=HashRepository(),
                 target_path=Path(args.target),
                 save_to_db=args.save,
                 sig_match_threshold=args.threshold,
@@ -219,7 +206,7 @@ def main(args: Optional[argparse.Namespace] = None):
         )
     )
     app = factory.create()
-    app.run()
+    print(app.run())
     print("Done!")
 
 
