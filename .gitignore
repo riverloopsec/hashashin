@@ -5,8 +5,7 @@ binary_data/
 fuzzy_hashing_papers/
 profile_code.py
 .gitignore
-*.hash.json
-*.sqlite3
+*.db
 .vscode/
 
 # Byte-compiled / optimized / DLL files

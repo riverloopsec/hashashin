@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional, Any, Iterable
+from typing import Optional, Any, Iterable, Generator, Union
 import zlib
 import json
 
@@ -28,9 +28,9 @@ from sqlalchemy.orm.relationships import RelationshipProperty
 from sqlalchemy.orm import Session, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from binaryninja import core_version, open_view
-import hashashin
+from hashashin.utils import logger
 
-logger = logging.getLogger(os.path.basename(__name__))
+logger = logger.getChild(Path(__file__).name)
 ORM_BASE: Any = declarative_base()
 
 
@@ -93,22 +93,44 @@ class FunctionFeatModel(ORM_BASE):
 @dataclass
 class AbstractFunction(ABC):
     name: str
-    function: BinaryNinjaFunction  # Union[BinaryNinjaFunction, GhidraFunction]
+    _function: Optional[BinaryNinjaFunction]
+    path: Optional[Path] = None
+
+    @property
+    def function(self) -> BinaryNinjaFunction:
+        if self._function is None:
+            if self.path is None:
+                raise ValueError("Path must be set")
+            logger.debug(f"Loading {self.name} from bv")
+            bv = open_view(self.path)
+            self._function = bv.get_function_at(BinjaFunction.str2addr(self.name))
+            if BinjaFunction.binja2str(self._function) != self.name:
+                raise ValueError(f"Function {self.name} not found in {self.path}")
+        return self._function
 
 
 @dataclass
 class BinjaFunction(AbstractFunction):
     # TODO: change from dataclass to regular class?
     name: str
-    function: BinaryNinjaFunction
+    _function: Optional[BinaryNinjaFunction]
+    path: Optional[Path] = None
 
     @staticmethod
     def binja2str(function: BinaryNinjaFunction) -> str:
         return f"{function} @ 0x{function.start:X}"
 
+    @staticmethod
+    def str2addr(name: str) -> int:
+        return int(name.split("@")[1].strip(), 16)
+
     @classmethod
     def fromFunctionRef(cls, function: BinaryNinjaFunction) -> "BinjaFunction":
-        return cls(cls.binja2str(function), function)
+        return cls(name=cls.binja2str(function), _function=function)
+
+    @classmethod
+    def fromFile(cls, path: Path, name: str) -> "BinjaFunction":
+        return cls(name=name, _function=None, path=path)
 
 
 class FeatureExtractor:
@@ -123,7 +145,9 @@ class FeatureExtractor:
     def __repr__(self):
         return f"{self.__class__.__name__}({self.version})"
 
-    def __eq__(self, other: "FeatureExtractor") -> bool:
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, FeatureExtractor):
+            return False
         return self.version == other.version
 
     def get_abstract_function(self, path: Path, name: str) -> AbstractFunction:
@@ -159,14 +183,6 @@ class BinjaFeatureExtractor(FeatureExtractor):
             edge_histogram=compute_edge_taxonomy_histogram(func),
         )
 
-    @staticmethod
-    def get_bv(path: str) -> BinaryView:
-        with open_view(path) as bv:
-            logger.warning(
-                "Binary view might close here, deal with it better if it does"
-            )
-            return bv
-
     def extract_from_file(self, path: Path) -> "BinarySignature":
         """
         Extracts features from all functions in a binary.
@@ -175,25 +191,18 @@ class BinjaFeatureExtractor(FeatureExtractor):
         """
         if not path.exists():
             raise FileNotFoundError(f"File {path} does not exist")
-        bv = self.get_bv(path)
-        return BinarySignature(
-            path=path,
-            functionFeatureList=[
-                self.extract(BinjaFunction.fromFunctionRef(func))
-                for func in bv.functions
-            ],
-            extraction_engine=self,
-        )
+        with open_view(path) as bv:
+            return BinarySignature(
+                path=path,
+                functionFeatureList=[
+                    self.extract(BinjaFunction.fromFunctionRef(func))
+                    for func in bv.functions
+                ],
+                extraction_engine=self,
+            )
 
     def get_abstract_function(self, path: Path, name: str) -> AbstractFunction:
-        """
-        Gets the abstract function (BinjaFunction).
-        :param path: path to binary
-        :param name: name of function
-        :return: abstract function
-        """
-        with open_view(path) as bv:
-            return BinjaFunction.fromFunctionRef(bv.get_functions_by_name(name)[0])
+        return BinjaFunction.fromFile(path, name)
 
 
 def extractor_from_name(name: str) -> FeatureExtractor:
@@ -233,7 +242,13 @@ class FunctionFeatures:
             return hex(self)
 
         def asArray(self):
-            return split_int_to_uint32(self, pad=self.length, wrap=True)
+            x = split_int_to_uint32(self, pad=self.length, wrap=True)
+            if int(np.ceil(len(bin(self)) / 32)) > self.length:
+                logger.debug(
+                    f"Dominator signature too long, truncating {hex(self)} -> {hex(merge_uint32_to_int(x))}"
+                )
+                logger.dominator_warning = True
+            return x
 
     class Constants(list):
         length = 64
@@ -257,18 +272,16 @@ class FunctionFeatures:
                 raise ValueError(
                     f"Expected array of length {FunctionFeatures.Strings.length}, got {len(array)}"
                 )
-            r = array.tobytes().decode("utf-8").rstrip("\0").split("\0")
-            if len(r) == 512:
-                breakpoint()
-                pass
             return array.tobytes().decode("utf-8").rstrip("\0").split("\0")
 
         def asArray(self) -> Iterable[int]:
             if len(self) == 0:
                 return [0] * self.length
-            logger.debug(
-                "Wasting space here, can shorten array by 256 bytes by using uint32"
-            )
+            if "warned" not in dir(logger):
+                logger.warning(
+                    "Wasting space here, can shorten array by 256 bytes by using uint32"
+                )
+                logger.warned = True
             strings = "\0".join(sorted(self[: len(self)])).encode("utf-8")
             strings = strings[: min(len(strings), self.length)]
             return np.pad(
@@ -306,9 +319,6 @@ class FunctionFeatures:
     binary_id: Optional[int] = None
 
     def __post_init__(self):
-        if len(self.strings) == 512:
-            breakpoint()
-            pass
         if not isinstance(self.constants, self.Constants):
             self.constants = self.Constants(self.constants)
         if not isinstance(self.strings, self.Strings):
@@ -326,6 +336,7 @@ class FunctionFeatures:
 
     def asArray(self) -> npt.NDArray[np.uint32]:
         try:
+            logger.dominator_warning = False
             array = np.array(
                 [
                     self.cyclomatic_complexity,
@@ -341,6 +352,11 @@ class FunctionFeatures:
                 ],
                 dtype=np.uint32,
             )
+            if logger.dominator_warning:
+                logger.warning(
+                    f"Truncated dominator signature for {str(self.function.path)}: {self.function.name}))"
+                )
+            logger.dominator_warning = False
             if len(array) != self.length:
                 for field in [
                     self.vertex_histogram,
@@ -367,17 +383,17 @@ class FunctionFeatures:
     def fromArray(
         cls,
         array: npt.NDArray[np.uint32],
-        function: AbstractFunction,
+        name: str,
+        path: Path,
         extraction_engine: FeatureExtractor,
     ) -> "FunctionFeatures":
         if not len(array) == cls.length:
-            breakpoint()
             raise ValueError(
                 f"Wrong array length {len(array)} != {cls.length} for {function.name}"
             )
         return cls(
             extraction_engine=extraction_engine,
-            function=function,
+            function=extraction_engine.get_abstract_function(path, name),
             cyclomatic_complexity=array[0],
             num_instructions=array[1],
             num_strings=array[2],
@@ -451,7 +467,8 @@ class FunctionFeatures:
     def fromModel(cls, model: FunctionFeatModel) -> "FunctionFeatures":
         return cls.fromArray(
             np.frombuffer(zlib.decompress(model.sig), dtype=np.uint32),
-            BinjaFunction(model.name, model.binary.path),
+            model.name,
+            model.binary.path,
             extractor_from_name(model.extraction_engine),
         )
 
@@ -462,6 +479,9 @@ class FunctionFeatures:
     def signature(self) -> bytes:
         return zlib.compress(self.asBytes())
 
+    def __hash__(self) -> int:
+        return hash(self.signature)
+
 
 @dataclass
 class BinarySignature:
@@ -469,6 +489,8 @@ class BinarySignature:
     path: Path
     functionFeatureList: list[FunctionFeatures]
     extraction_engine: FeatureExtractor
+    cached_signature: Optional[bytes] = None
+    cached_array: Optional[np.ndarray] = None
 
     def __post_init__(self):
         if not self.path.exists():
@@ -518,25 +540,21 @@ class BinarySignature:
 
     @property
     def np_signature(self) -> npt.NDArray[np.uint32]:
-        try:
-            for f in self.functionFeatureList:
-                try:
-                    f.asArray()
-                except Exception as e:
-                    breakpoint()
-                    logger.error(f"Error while creating signature for {self.path}")
-                    raise e
-            return self.min_hash(
+        if self.cached_array is None:
+            self.cached_array = self.min_hash(
                 np.array([f.asArray() for f in self.functionFeatureList])
             )
-        except Exception as e:
-            breakpoint()
-            logger.error(f"Error while creating signature for {self.path}")
-            raise e
+        else:
+            logger.debug("Using cached np signature.")
+        return self.cached_array
 
     @property
     def signature(self) -> bytes:
-        return zlib.compress(self.np_signature.tobytes())
+        if self.cached_signature is None:
+            self.cached_signature = zlib.compress(self.np_signature.tobytes())
+        else:
+            logger.debug("Using cached signature.")
+        return self.cached_signature
 
     @staticmethod
     def minhash_similarity(
@@ -562,6 +580,25 @@ class BinarySignature:
         :param sig2: the second signature
         :return: the distance between the two signatures
         """
+        if isinstance(sig1, list):
+            sig1 = set(sig1)
+        if isinstance(sig2, list):
+            sig2 = set(sig2)
+        return len(sig1.intersection(sig2)) / len(sig1.union(sig2))
+
+    @staticmethod
+    def jaccard_estimate(sig1: set[bytes], sig2: set[bytes]) -> float:
+        """
+        Calculate the feature distance between two signatures.
+
+        :param sig1: the first signature
+        :param sig2: the second signature
+        :return: the distance between the two signatures
+        """
+        if isinstance(sig1, list):
+            sig1 = set(sig1)
+        if isinstance(sig2, list):
+            sig2 = set(sig2)
         return len(sig1.intersection(sig2)) / len(sig1.union(sig2))
 
     def __floordiv__(self, other: "BinarySignature") -> float:

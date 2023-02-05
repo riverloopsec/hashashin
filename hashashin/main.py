@@ -20,10 +20,9 @@ from hashashin.db import (
 )
 from hashashin.classes import BinjaFeatureExtractor, FeatureExtractor
 from hashashin.utils import get_binaries
-import logging
+from hashashin.utils import logger
 
-
-logger = logging.getLogger(os.path.basename(__file__))
+logger = logger.getChild(Path(__file__).name)
 
 
 class Task(Enum):
@@ -84,7 +83,8 @@ class BinaryMatcherApplication(HashashinApplication):
         if not self.context.target_path.exists():
             raise ValueError("Target path does not exist")
         targets = get_binaries(self.context.target_path)
-        for target_path in targets:
+        show_progress = self.context.app_context.progress
+        for target_path in tqdm(targets, disable=not show_progress):
             target_signature = self.context.extractor.extract_from_file(target_path)
             if self.context.save_to_db:
                 self.context.hash_repo.save(target_signature)
@@ -98,6 +98,7 @@ class BinaryMatcherApplication(HashashinApplication):
             yield target_signature, matches
 
     def run(self) -> list[tuple[BinarySignature, list[BinarySignature]]]:
+        logger.info("Matching binaries")
         return list(self.step())
 
 
@@ -133,10 +134,13 @@ class BinaryHasherApplication(HashashinApplication):
             target_path, progress=self.context.progress, recursive=True
         )
         logger.info(f"Hashing {len(targets)} binaries")
-        for t in targets:
+        pbar = tqdm(targets, disable=not self.context.progress)
+        for t in pbar:
+            pbar.set_description(f"Hashing {t}")
             cached = self.context.hash_repo.get(t)
             if cached is not None:
-                logger.info(f"Binary {t} already hashed, skipping")
+                pbar.set_description(f"Retrieved {t} from db")
+                logger.debug(f"Binary {t} already hashed, skipping")
                 yield cached
                 continue
             target_signature = self.context.extractor.extract_from_file(t)
@@ -145,6 +149,7 @@ class BinaryHasherApplication(HashashinApplication):
             yield target_signature
 
     def run(self) -> list[BinarySignature]:
+        logger.info(f"Hashing {self.context.target_path}")
         return list(self.step())
 
 

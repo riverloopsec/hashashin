@@ -13,8 +13,9 @@ from binaryninja import BasicBlock  # type: ignore
 from binaryninja import BinaryView  # type: ignore
 from binaryninja import enums  # type: ignore
 from binaryninja import Function as BinaryNinjaFunction
+from hashashin.utils import logger
 
-logger = logging.getLogger(os.path.basename(__name__))
+logger = logger.getChild(os.path.basename(__file__))
 
 NUM_INSTR_CATEGORIES = len(enums.MediumLevelILOperation.__members__)
 VERTICES = 3
@@ -122,6 +123,7 @@ def compute_instruction_histogram(
         ):
             time.sleep(0.1)
         if not fn.mlil:
+            breakpoint()
             raise ValueError(
                 f"MLIL not available for function or analysis exceeded {timeout}s timeout."
             )

@@ -21,8 +21,9 @@ from hashashin.classes import (
     FunctionFeatures,
     ORM_BASE,
 )
+from hashashin.utils import logger
 
-logger = logging.getLogger(os.path.basename(__name__))
+logger = logger.getChild(Path(__file__).name)
 SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
 
 
