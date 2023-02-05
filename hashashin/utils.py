@@ -3,6 +3,8 @@ import glob
 import json
 import logging
 import os
+from pathlib import Path
+from typing import Union, Iterable
 
 import binaryninja  # type: ignore
 import magic
@@ -13,14 +15,22 @@ from tqdm import tqdm  # type: ignore
 logger = logging.getLogger(os.path.basename(__name__))
 
 
-def get_binaries(path, bin_name=None, recursive=True, progress=False):
+def get_binaries(
+    path: Union[Path, Iterable[Path]], bin_name=None, recursive=True, progress=False
+) -> list[Path]:
     """Get all binaries in a directory"""
-    if os.path.isfile(path):
+    globber = "*" + "*" * recursive
+    if isinstance(path, Iterable):
+        files = []
+        for p in path:
+            files.extend(get_binaries(p, bin_name, recursive, progress))
+        return files
+    elif os.path.isfile(path):
         files = [path]
     elif bin_name is None:
-        files = glob.glob(f"{path}/**", recursive=recursive)
+        files = list(path.glob(globber + "/*"))
     else:
-        files = glob.glob(f"{path}/**/{bin_name}", recursive=recursive)
+        files = list(path.glob(globber + f"/{bin_name}"))
     binaries = []
     if not progress:
         print(
@@ -34,7 +44,7 @@ def get_binaries(path, bin_name=None, recursive=True, progress=False):
         disable=not progress,
         desc=f"Gathering binaries in {os.path.relpath(path)}",
     ):
-        if os.path.isfile(f):
+        if f.is_file():
             if "ELF" in magic.from_file(f):
                 binaries.append(f)
     return binaries
@@ -68,3 +78,8 @@ def merge_uint32_to_int(x: npt.NDArray[np.uint32]) -> int:
     for i, v in enumerate(x):
         ret |= int(v) << (32 * i)
     return ret
+
+
+def bytes_distance(a: bytes, b: bytes) -> float:
+    """Calculate the distance between two byte strings"""
+    return np.mean(np.frombuffer(a, dtype=np.uint) != np.frombuffer(b, dtype=np.uint8))

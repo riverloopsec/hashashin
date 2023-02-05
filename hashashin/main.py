@@ -4,7 +4,7 @@ from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Collection, Iterable, Optional, Union
+from typing import Collection, Iterable, Optional, Union, Generator
 import argparse
 
 import magic
@@ -18,7 +18,7 @@ from hashashin.db import (
     SQLAlchemyFunctionFeatureRepository,
     HashRepository,
 )
-from hashashin.feature_extractors import BinjaFeatureExtractor, FeatureExtractor
+from hashashin.classes import BinjaFeatureExtractor, FeatureExtractor
 from hashashin.utils import get_binaries
 import logging
 
@@ -35,7 +35,7 @@ class Task(Enum):
 class HashashinApplicationContext:
     extractor: FeatureExtractor
     hash_repo: HashRepository
-    target_path: Optional[Path]
+    target_path: Optional[Union[Path, Iterable[Path]]]
     save_to_db: Optional[bool]
     sig_match_threshold: float = 0.5
     # feat_match_threshold: int = 0
@@ -54,6 +54,10 @@ class HashashinApplication(ABC):
 
     def run(self):
         raise NotImplementedError
+
+    def target(self, target: Union[Path, Iterable[Path]]):
+        self.context.target_path = target
+        return self.run()
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.context})"
@@ -96,10 +100,6 @@ class BinaryMatcherApplication(HashashinApplication):
     def run(self) -> list[tuple[BinarySignature, list[BinarySignature]]]:
         return list(self.step())
 
-    def match_target(self, target: Path):
-        self.context.target_path = target
-        return self.run()
-
 
 class BinaryHasherApplication(HashashinApplication):
     def _hash(self, binary: Path) -> BinarySignature:
@@ -116,12 +116,30 @@ class BinaryHasherApplication(HashashinApplication):
     def step(self) -> Iterable[BinarySignature]:
         if self.context.target_path is None:
             raise ValueError("No target binary specified")
-        if not self.context.target_path.exists():
-            raise ValueError("Target binary does not exist")
-        targets = get_binaries(self.context.target_path, progress=self.context.progress)
+        target_path: Union[Path, list[Path]] = (
+            list(self.context.target_path)
+            if isinstance(self.context.target_path, Generator)
+            else self.context.target_path
+        )
+        if isinstance(target_path, list) and not all(p.exists() for p in target_path):
+            raise ValueError(
+                f"List of target binaries contains non-existent paths: {target_path}"
+            )
+        if isinstance(target_path, Path) and not target_path.exists():
+            raise ValueError(
+                f"Target binary does not exist: {self.context.target_path}"
+            )
+        targets = get_binaries(
+            target_path, progress=self.context.progress, recursive=True
+        )
         logger.info(f"Hashing {len(targets)} binaries")
-        for target_path in targets:
-            target_signature = self.context.extractor.extract_from_file(target_path)
+        for t in targets:
+            cached = self.context.hash_repo.get(t)
+            if cached is not None:
+                logger.info(f"Binary {t} already hashed, skipping")
+                yield cached
+                continue
+            target_signature = self.context.extractor.extract_from_file(t)
             if self.context.save_to_db:
                 self.context.hash_repo.save(target_signature)
             yield target_signature
@@ -142,6 +160,28 @@ class ApplicationFactory:
         else:
             raise NotImplementedError
 
+    @classmethod
+    def fromAppContext(
+        cls, context: HashashinApplicationContext, task: Task
+    ) -> HashashinApplication:
+        return ApplicationFactory(HashashinFactoryContext(context, task)).create()
+
+    @classmethod
+    def getHasher(cls, context: HashashinApplicationContext) -> BinaryHasherApplication:
+        hasher = ApplicationFactory.fromAppContext(context, Task.HASH)
+        if not isinstance(hasher, BinaryHasherApplication):
+            raise ValueError("Invalid hasher")
+        return hasher
+
+    @classmethod
+    def getMatcher(
+        cls, context: HashashinApplicationContext
+    ) -> BinaryMatcherApplication:
+        matcher = ApplicationFactory.fromAppContext(context, Task.MATCH)
+        if not isinstance(matcher, BinaryMatcherApplication):
+            raise ValueError("Invalid matcher")
+        return matcher
+
 
 def main(args: Optional[argparse.Namespace] = None):
     if args is None:
@@ -158,7 +198,9 @@ def main(args: Optional[argparse.Namespace] = None):
             "--task",
             "-t",
             type=str,
-            choices=[t.value for t in Task if isinstance(t.value, str)],  # mypy type fix
+            choices=[
+                t.value for t in Task if isinstance(t.value, str)
+            ],  # mypy type fix
             help="Application task",
         )
         app_group.add_argument(

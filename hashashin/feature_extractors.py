@@ -9,24 +9,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Callable, Optional, Union
 
 import numpy as np
-import numpy.typing as npt
 from binaryninja import BasicBlock  # type: ignore
 from binaryninja import BinaryView  # type: ignore
 from binaryninja import enums  # type: ignore
-from binaryninja import core_version, open_view
-
-from hashashin.classes import (
-    AbstractFunction,
-    BinaryNinjaFunction,
-    BinarySignature,
-    BinjaFunction,
-    FunctionFeatures,
-    FeatureExtractor,
-)
+from binaryninja import Function as BinaryNinjaFunction
 
 logger = logging.getLogger(os.path.basename(__name__))
 
 NUM_INSTR_CATEGORIES = len(enums.MediumLevelILOperation.__members__)
+VERTICES = 3
+EDGES = 4
 
 
 def compute_cyclomatic_complexity(fn: BinaryNinjaFunction) -> int:
@@ -133,9 +125,9 @@ def compute_instruction_histogram(
             raise ValueError(
                 f"MLIL not available for function or analysis exceeded {timeout}s timeout."
             )
-    for instr in fn.mlil_instructions:
+    for instr in fn.mlil.instructions:
         # https://youtrack.jetbrains.com/issue/PY-55734/IntEnum.value-is-not-recognized-as-a-property
-        vector[instr.operation.value] += 1
+        vector[instr.operation.value] += 1  # type: ignore
     return vector
 
 
@@ -181,7 +173,7 @@ def compute_vertex_taxonomy_histogram(fn: BinaryNinjaFunction) -> list[int]:
         1: Exit
         2: Normal
     """
-    vector = [0] * 3
+    vector = [0] * VERTICES
     for block in fn.basic_blocks:
         if block.dominators == [block]:
             vector[0] += 1
@@ -256,55 +248,4 @@ def compute_edge_taxonomy_histogram(fn: BinaryNinjaFunction) -> list[int]:
     """
     # TODO: fix return type hint
     entry = fn.get_basic_block_at(fn.start)
-    return list(np.bincount(list(recursive_edge_count(entry)), minlength=4))
-
-
-class BinjaFeatureExtractor(FeatureExtractor):
-    version = core_version()
-
-    def extract(self, function: AbstractFunction) -> FunctionFeatures:
-        """
-        Extracts features from a function.
-        :param function: function to extract features from
-        :return: features
-        """
-        if not isinstance(function.function, BinaryNinjaFunction):
-            raise ValueError(
-                f"Expected Binary Ninja function, got {type(function.function)}"
-            )
-        func: BinaryNinjaFunction = function.function
-        return FunctionFeatures(
-            extraction_engine=self,
-            function=BinjaFunction.fromFunctionRef(func),
-            cyclomatic_complexity=compute_cyclomatic_complexity(func),
-            num_instructions=len(list(func.instructions)),
-            num_strings=len(get_fn_strings(func)),
-            max_string_length=len(max(get_fn_strings(func), key=len, default="")),
-            constants=sorted(compute_constants(func)),
-            strings=sorted(get_fn_strings(func)),
-            instruction_histogram=compute_instruction_histogram(func),
-            dominator_signature=compute_dominator_signature(func),
-            vertex_histogram=compute_vertex_taxonomy_histogram(func),
-            edge_histogram=compute_edge_taxonomy_histogram(func),
-        )
-
-    def extract_from_file(self, path: Path) -> BinarySignature:
-        """
-        Extracts features from all functions in a binary.
-        :param path: path to binary
-        :return: list of features
-        """
-        if not path.exists():
-            raise FileNotFoundError(f"File {path} does not exist")
-        with open_view(path) as bv:
-            logger.warning(
-                "Binary view might close here, deal with it better if it does"
-            )
-            return BinarySignature(
-                path=path,
-                functionFeatureList=[
-                    self.extract(BinjaFunction.fromFunctionRef(func))
-                    for func in bv.functions
-                ],
-                extraction_engine=self,
-            )
+    return list(np.bincount(list(recursive_edge_count(entry)), minlength=EDGES))

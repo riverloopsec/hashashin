@@ -10,69 +10,20 @@ from abc import ABC
 
 import xxhash
 from sqlalchemy import Column, ForeignKey, Integer, LargeBinary, String, create_engine
-from sqlalchemy.ext.declarative import declarative_base
+
 from sqlalchemy.orm import Session, relationship, sessionmaker
 from sqlalchemy.orm.relationships import RelationshipProperty
 
-from hashashin.classes import BinarySignature, FunctionFeatures
+from hashashin.classes import (
+    BinarySigModel,
+    FunctionFeatModel,
+    BinarySignature,
+    FunctionFeatures,
+    ORM_BASE,
+)
 
 logger = logging.getLogger(os.path.basename(__name__))
-ORM_BASE: Any = declarative_base()
 SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
-
-
-class BinarySigModel(ORM_BASE):
-    __tablename__ = "binaries"
-    id = Column(Integer, primary_key=True)
-    hash = Column(LargeBinary, unique=True, index=True)
-    path = Column(String)
-    sig = Column(LargeBinary, nullable=True)
-    functions: RelationshipProperty = relationship("FunctionFeatModel")
-    extraction_engine = Column(String)
-
-    @classmethod
-    def fromBinarySignature(cls, sig: BinarySignature) -> "BinarySigModel":
-        with open(sig.path, "rb") as f:
-            return cls(
-                hash=xxhash.xxh64(f.read()).digest(),
-                path=sig.path.name,
-                sig=sig.signature,
-                extraction_engine=str(sig.extraction_engine),
-            )
-
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, BinarySigModel):
-            return False
-        return (
-            self.hash == other.hash
-            and self.path == other.path
-            and self.sig == other.sig
-            and self.extraction_engine == other.extraction_engine
-        )
-
-
-class FunctionFeatModel(ORM_BASE):
-    __tablename__ = "functions"
-    id = Column(Integer, primary_key=True)
-    bin_id = Column(Integer, ForeignKey("binaries.id"))
-    binary: RelationshipProperty = relationship(
-        "BinarySigModel", back_populates="functions"
-    )
-    name = Column(String)  # function name & address using func2str
-    sig = Column(LargeBinary)  # zlib compression has variable size
-    extraction_engine = Column(String)
-
-    @classmethod
-    def fromFunctionFeatures(cls, features: FunctionFeatures) -> "FunctionFeatModel":
-        if features.binary_id is None:
-            # TODO: query the database for the binary_id
-            raise ValueError("binary_id must be set")
-        return cls(
-            bin_id=features.binary_id,
-            name=features.function.name,
-            sig=features.signature,
-            extraction_engine=str(features.extraction_engine),
-        )
 
 
 class RepositoryType(Enum):
@@ -83,7 +34,8 @@ class RepositoryType(Enum):
 @dataclass
 class RepositoryConfig(ABC):
     db_type: tuple[RepositoryType, RepositoryType] = (
-        RepositoryType.NONE, RepositoryType.NONE
+        RepositoryType.NONE,
+        RepositoryType.NONE,
     )
 
 
@@ -103,6 +55,12 @@ class BinarySignatureRepository:
         """Return all matching signatures with a similarity above the threshold."""
         raise NotImplementedError
 
+    def get(self, path: Path):
+        raise NotImplementedError
+
+    def __len__(self) -> int:
+        raise NotImplementedError
+
 
 class FunctionFeatureRepository:
     config: RepositoryConfig
@@ -113,6 +71,9 @@ class FunctionFeatureRepository:
     def store_features(self, features: List[FunctionFeatures]):
         for feat in features:
             self.store_feature(feat)
+
+    def get(self, binary_id: int, function_name: Optional[str] = None):
+        raise NotImplementedError
 
 
 @dataclass
@@ -140,6 +101,19 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
             session.commit()
             session.refresh(func)
         return func
+
+    def get(self, binary_id: int, function_name: Optional[str] = None):
+        with self.session() as session:
+            if function_name is None:
+                return (
+                    session.query(FunctionFeatModel).filter_by(bin_id=binary_id).all()
+                )
+            else:
+                return (
+                    session.query(FunctionFeatModel)
+                    .filter_by(bin_id=binary_id, name=function_name)
+                    .first()
+                )
 
     def __len__(self) -> int:
         with self.session() as session:
@@ -185,16 +159,29 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
                     .all()
                 )
             signatures = session.query(BinarySigModel).all()
+            for sig in signatures:
+                try:
+                    BinarySignature.fromModel(sig).np_signature
+                except Exception as e:
+                    breakpoint()
+                    pass
             sorted_signatures = sorted(
                 signatures,
-                key=lambda sig: sig.sig.similarity(signature.signature),
+                key=lambda sig: BinarySignature.fromModel(sig) // signature,
                 reverse=True,
             )
             return [
                 sig
                 for sig in sorted_signatures
-                if sig.sig.similarity(signature.signature) > threshold
+                if BinarySignature.fromModel(sig) // signature > threshold
             ]
+
+    def get(self, path: Path) -> Optional[BinarySignature]:
+        with self.session() as session:
+            with open(path, "rb") as f:
+                binhash = xxhash.xxh64(f.read()).digest()
+            cached = session.query(BinarySigModel).filter_by(hash=binhash).first()
+            return BinarySignature.fromModel(cached) if cached else None
 
     def __len__(self) -> int:
         with self.session() as session:
@@ -206,8 +193,9 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
 
 class HashRepository:
     @staticmethod
-    def _bin_repo_type_to_class(repo_type: RepositoryType, config: Optional[RepositoryConfig]) -> \
-            BinarySignatureRepository:
+    def _bin_repo_type_to_class(
+        repo_type: RepositoryType, config: Optional[RepositoryConfig]
+    ) -> BinarySignatureRepository:
         if repo_type == RepositoryType.SQLALCHEMY:
             if config is None:
                 return SQLAlchemyBinarySignatureRepository(SQLAlchemyConfig())
@@ -217,8 +205,9 @@ class HashRepository:
         raise NotImplementedError(f"Repository type {repo_type} not implemented")
 
     @staticmethod
-    def _func_repo_type_to_class(repo_type: RepositoryType, config: Optional[RepositoryConfig]) -> \
-            FunctionFeatureRepository:
+    def _func_repo_type_to_class(
+        repo_type: RepositoryType, config: Optional[RepositoryConfig]
+    ) -> FunctionFeatureRepository:
         if repo_type == RepositoryType.SQLALCHEMY:
             if config is None:
                 return SQLAlchemyFunctionFeatureRepository(SQLAlchemyConfig())
@@ -227,9 +216,17 @@ class HashRepository:
             raise ValueError(f"Invalid config type {type(config)}")
         raise NotImplementedError(f"Repository type {repo_type} not implemented")
 
-    def __init__(self, repo_type: RepositoryType = RepositoryType.SQLALCHEMY, db_config: Optional[RepositoryConfig] = None):
-        self.binary_repo: BinarySignatureRepository = self._bin_repo_type_to_class(repo_type, db_config)
-        self.function_repo: FunctionFeatureRepository = self._func_repo_type_to_class(repo_type, db_config)
+    def __init__(
+        self,
+        repo_type: RepositoryType = RepositoryType.SQLALCHEMY,
+        db_config: Optional[RepositoryConfig] = None,
+    ):
+        self.binary_repo: BinarySignatureRepository = self._bin_repo_type_to_class(
+            repo_type, db_config
+        )
+        self.function_repo: FunctionFeatureRepository = self._func_repo_type_to_class(
+            repo_type, db_config
+        )
         if self.binary_repo.config != self.function_repo.config:
             raise ValueError("Binary and Function repository must have the same config")
         self.db_config = self.binary_repo.config
@@ -242,3 +239,14 @@ class HashRepository:
             for feat in sig.functionFeatureList:
                 feat.binary_id = binary.id
                 self.function_repo.store_feature(feat)
+
+    def get(self, path: Path) -> Optional[BinarySignature]:
+        return self.binary_repo.get(path)
+
+    def match(
+        self, signature: BinarySignature, threshold: float = 0.5
+    ) -> list[BinarySignature]:
+        return self.binary_repo.match_signature(signature, threshold)
+
+    def __len__(self) -> int:
+        return len(self.binary_repo)
