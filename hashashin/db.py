@@ -7,9 +7,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, List, Optional, Union, Collection
 from abc import ABC
+from tqdm import tqdm
+import numpy as np
 
 import xxhash
-from sqlalchemy import Column, ForeignKey, Integer, LargeBinary, String, create_engine
+from sqlalchemy import Column, ForeignKey, Integer, LargeBinary, String, create_engine, cast
 
 from sqlalchemy.orm import Session, relationship, sessionmaker
 from sqlalchemy.orm.relationships import RelationshipProperty
@@ -56,7 +58,17 @@ class BinarySignatureRepository:
         """Return all matching signatures with a similarity above the threshold."""
         raise NotImplementedError
 
+    def fast_match(self, signature: BinarySignature, threshold: float = 0.5) -> list[BinarySignature]:
+        """Return all matching signatures with a similarity above the threshold."""
+        raise NotImplementedError
+
     def get(self, path: Path):
+        raise NotImplementedError
+
+    def getAll(self):
+        raise NotImplementedError
+
+    def get_id_from_path(self, path: Path):
         raise NotImplementedError
 
     def __len__(self) -> int:
@@ -74,6 +86,15 @@ class FunctionFeatureRepository:
             self.store_feature(feat)
 
     def get(self, binary_id: int, function_name: Optional[str] = None):
+        raise NotImplementedError
+
+    def get_all(self):
+        raise NotImplementedError
+
+    def get_bin_count(self, binary_id: int):
+        raise NotImplementedError
+
+    def get_feature_matrix(self, binary: Optional[str]) -> tuple[np.array, list[FunctionFeatModel]]:
         raise NotImplementedError
 
 
@@ -116,6 +137,43 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
                     .first()
                 )
 
+    def get_all(self):
+        with self.session() as session:
+            return session.query(FunctionFeatModel).all()
+
+    def get_feature_matrix(self, binary_path: Optional[Path]) -> tuple[np.array, list[FunctionFeatModel]]:
+        with self.session() as session:
+            features = session.query(FunctionFeatModel)
+            if binary_path is not None:
+                bin_id = session.query(BinarySigModel).filter_by(path=str(binary_path)).first()
+                if bin_id is None:
+                    if session.query(BinarySigModel).filter_by(path=str('hashashin' / binary_path)).first() is not None:
+                        bin_id = session.query(BinarySigModel).filter_by(path=str('hashashin' / binary_path)).first()
+                    else:
+                        raise ValueError(f"Binary {binary_path} not found in database")
+                features = features.filter_by(bin_id=bin_id.id)
+            features = features.all()
+            return np.stack([FunctionFeatures.fromModel(x).asArray() for x in features]), features
+
+
+    # def match(self, fn: FunctionFeatures, threshold: float = 0.95) -> list[FunctionFeatures]:
+    #     with self.session() as session:
+    #         features = session.query(FunctionFeatModel).all()
+    #         logger.info(f"Matching {len(features)} features against {fn}")
+    #         features = [(x, x ^ fn) for x in tqdm(features, desc=f"Computing similarity scores...") if (x ^ fn) > threshold]
+    #         logger.info(f"Found {len(features)} features above threshold")
+    #         sorted_features = sorted(
+    #             features,
+    #             key=lambda x: x[1],
+    #             reverse=True,
+    #         )
+    #         sorted_features = [FunctionFeatures.fromModel(x[0]) for x in sorted_features]
+    #         return sorted_features
+
+    def get_bin_count(self, bin_id: int) -> int:
+        with self.session() as session:
+            return session.query(FunctionFeatModel).filter_by(bin_id=bin_id).count()
+
     def __len__(self) -> int:
         with self.session() as session:
             return session.query(FunctionFeatModel).count()
@@ -147,6 +205,23 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
             session.commit()
             session.refresh(binary)
         return binary
+
+    def fast_match(self, signature: BinarySignature, threshold: float = 0.5) -> list[BinarySignature]:
+        with self.session() as session:
+            if threshold == 0:
+                return (
+                    session.query(BinarySigModel)
+                    .filter(BinarySigModel.sig == signature.signature)
+                    .all()
+                )
+            signatures = session.query(BinarySigModel).all()
+            signatures = list(filter(lambda s: (s ^ signature).count(b'\x00') > threshold * len(signature.signature), signatures))
+            sorted_signatures = sorted(
+                signatures,
+                key=lambda sig: BinarySignature.fromModel(sig) // signature,
+                reverse=True,
+            )
+            return sorted_signatures
 
     def match_signature(
         self, signature: BinarySignature, threshold: float = 0.5
@@ -201,12 +276,28 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
                 session.commit()
                 return BinarySignature.fromModel(cached)
 
+    def getAll(self) -> list[BinarySignature]:
+        with self.session() as session:
+            return [BinarySignature.fromModel(x) for x in session.query(BinarySigModel).all()]
+
+    def get_id_from_path(self, path: Path):
+        with self.session() as session:
+            saved = session.query(BinarySigModel).filter_by(path=str(path)).first()
+            if saved:
+                return saved.id
+
     def __len__(self) -> int:
         with self.session() as session:
             return session.query(BinarySigModel).count()
 
-    def drop(self):
-        ORM_BASE.metadata.drop_all(self.engine)
+    def drop(self, option: Optional[Union[str, Path]] = None):
+        if option == "all":
+            ORM_BASE.metadata.drop_all(self.engine)
+        elif isinstance(option, Path) and option.is_file():
+            with self.session() as session:
+                cached = session.query(BinarySigModel).filter_by(path=str(option))
+                cached.delete()
+                session.commit()
 
 
 class HashRepository:

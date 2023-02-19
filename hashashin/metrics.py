@@ -4,7 +4,6 @@ import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 
-from hashashin.main import BinaryHasherApplication
 from hashashin.classes import BinarySignature
 from sklearn.preprocessing import normalize
 from hashashin.utils import logger
@@ -27,7 +26,7 @@ def show_similarity_matrix(mat, labels, title=None, font_scale=0.7, figsize=(14,
 
 def hash_paths(
     base_binary,
-    hasher: BinaryHasherApplication,
+    hasher: "BinaryHasherApplication",
     paths=None,
     binary_dir=Path(".").parent / "binary_data",
 ):

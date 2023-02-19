@@ -41,7 +41,7 @@ class BinarySigModel(ORM_BASE):
     hash = Column(LargeBinary, unique=True, index=True)
     path = Column(String)
     sig = Column(LargeBinary, nullable=True)
-    functions: RelationshipProperty = relationship("FunctionFeatModel")
+    functions: RelationshipProperty = relationship("FunctionFeatModel", cascade="all, delete-orphan")
     extraction_engine = Column(String)
 
     @classmethod
@@ -63,6 +63,15 @@ class BinarySigModel(ORM_BASE):
             and self.extraction_engine == other.extraction_engine
         )
 
+    def __xor__(self, other):
+        if isinstance(other, bytes):
+            return bytes([a ^ b for a, b in zip(self.sig, other)])
+        if isinstance(other, BinarySignature):
+            return bytes([a ^ b for a, b in zip(self.sig, other.signature)])
+        if isinstance(other, BinarySigModel):
+            return bytes([a ^ b for a, b in zip(self.sig, other.sig)])
+        raise TypeError(f"Cannot xor BinarySigModel with {type(other)}")
+
     def __repr__(self) -> str:
         return f"BinarySigModel({self.path}, {self.hash}, {self.sig}, {self.extraction_engine})"
 
@@ -70,7 +79,7 @@ class BinarySigModel(ORM_BASE):
 class FunctionFeatModel(ORM_BASE):
     __tablename__ = "functions"
     id = Column(Integer, primary_key=True)
-    bin_id = Column(Integer, ForeignKey("binaries.id"))
+    bin_id = Column(Integer, ForeignKey("binaries.id", ondelete="CASCADE"))
     binary: RelationshipProperty = relationship(
         "BinarySigModel", back_populates="functions"
     )
@@ -89,6 +98,15 @@ class FunctionFeatModel(ORM_BASE):
             sig=features.signature,
             extraction_engine=str(features.extraction_engine),
         )
+
+    def __xor__(self, other):
+        if isinstance(other, bytes):
+            return bytes([a ^ b for a, b in zip(zlib.decompress(self.sig), zlib.decompress(other))]).count(b'\x00')
+        if isinstance(other, FunctionFeatures):
+            return bytes([a ^ b for a, b in zip(zlib.decompress(self.sig), zlib.decompress(other.signature))]).count(b'\x00') / (FunctionFeatures.length * 4)
+        if isinstance(other, FunctionFeatModel):
+            return bytes([a ^ b for a, b in zip(zlib.decompress(self.sig), zlib.decompress(other.sig))]).count(b'\x00') / (FunctionFeatures.length * 4)
+        raise TypeError(f"Cannot xor FunctionFeatModel with {type(other)}")
 
 
 @dataclass
@@ -141,7 +159,7 @@ class FeatureExtractor:
         raise NotImplementedError
 
     def extract_from_file(
-        self, path: Path, progress_kwargs: Optional[dict]
+        self, path: Path, progress_kwargs: Optional[dict] = None
     ) -> "BinarySignature":
         raise NotImplementedError
 
@@ -279,17 +297,21 @@ class FunctionFeatures:
 
         @staticmethod
         def fromArray(array: np.ndarray) -> Iterable[str]:
+            logger.debug("There is a bug here, strings are not displayed properly")
             if len(array) != FunctionFeatures.Strings.length:
                 raise ValueError(
                     f"Expected array of length {FunctionFeatures.Strings.length}, got {len(array)}"
                 )
-            return array.tobytes().decode("utf-8").rstrip("\0").split("\0")
+            r = array.tobytes().decode("utf-8").rstrip("\0").split("\0")
+            if len(r) > 1:
+                pass
+            return r
 
         def asArray(self) -> Iterable[int]:
             if len(self) == 0:
                 return [0] * self.length
             if "warned" not in dir(logger):
-                logger.warning(
+                logger.debug(
                     "Wasting space here, can shorten array by 256 bytes by using uint32"
                 )
                 logger.warned = True
@@ -364,19 +386,19 @@ class FunctionFeatures:
                 dtype=np.uint32,
             )
             if logger.dominator_warning:
-                logger.warning(
+                logger.debug(
                     f"Truncated dominator signature for {str(self.function.path)}: {self.function.name}))"
                 )
             logger.dominator_warning = False
             if len(array) != self.length:
-                for field in [
+                for field in (
                     self.vertex_histogram,
                     self.edge_histogram,
                     self.instruction_histogram,
                     self.dominator_signature,
                     self.constants,
                     self.strings,
-                ]:
+                ):
                     arr = field if issubclass(type(field), list) else field.asArray()
                     logger.error(
                         f"{type(field)} expected {field.length} got {len(arr)}"
@@ -493,6 +515,16 @@ class FunctionFeatures:
     def __hash__(self) -> int:
         return hash(self.signature)
 
+    def __sub__(self, other):
+        if not isinstance(other, FunctionFeatures):
+            raise TypeError(f"Cannot subtract {type(self)} with {type(other)}")
+        return np.linalg.norm(self.asArray() - other.asArray())
+
+    def __xor__(self, other):
+        if not isinstance(other, FunctionFeatures):
+            raise TypeError(f"Cannot xor {type(self)} with {type(other)}")
+        return bytes([a ^ b for a, b in zip(self.asBytes(), other.asBytes())]).count(b'\x00') / (self.length * 4)
+
 
 @dataclass
 class BinarySignature:
@@ -504,6 +536,10 @@ class BinarySignature:
     cached_array: Optional[np.ndarray] = None
 
     def __post_init__(self):
+        for i in range(len(self.path.parts)):
+            if Path(*self.path.parts[i:]).exists():
+                self.path = Path(*self.path.parts[i:])
+                break
         if not self.path.exists():
             raise FileNotFoundError(f"File {self.path} does not exist.")
         if not self.extraction_engine:

@@ -17,11 +17,11 @@ logger = logging.getLogger("hashashin")
 
 
 def get_binaries(
-    path: Union[Path, Iterable[Path]], bin_name=None, recursive=True, progress=False
+    path: Union[Path, Iterable[Path]], bin_name=None, recursive=True, progress=False, silent=False
 ) -> list[Path]:
     """Get all binaries in a directory"""
     globber = "*" + "*" * recursive
-    if isinstance(path, Iterable):
+    if not isinstance(path, (str, Path)) and isinstance(path, Iterable):
         files = []
         for p in path:
             files.extend(get_binaries(p, bin_name, recursive, progress))
@@ -40,10 +40,11 @@ def get_binaries(
     binaries = []
     if not progress:
         if "progress_warning" not in dir(logger):
-            logger.info(
-                f"Iterating over {len(files)} files. If you see this, consider using --progress.",
-            )
-            logger.progress_warning = True
+            if not silent:
+                logger.info(
+                    f"Iterating over {len(files)} files. If you see this, consider using --progress.",
+                )
+                logger.progress_warning = True
     elif len(files) == 1:
         progress = False
     for f in tqdm(
