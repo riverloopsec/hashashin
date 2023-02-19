@@ -179,10 +179,27 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
 
     def get(self, path: Path) -> Optional[BinarySignature]:
         with self.session() as session:
-            with open(path, "rb") as f:
-                binhash = xxhash.xxh64(f.read()).digest()
-            cached = session.query(BinarySigModel).filter_by(hash=binhash).first()
-            return BinarySignature.fromModel(cached) if cached else None
+            binhash = BinarySignature.hash_file(path)
+            cached = session.query(BinarySigModel).filter_by(hash=binhash)
+            if cached.count() > 1:
+                if cached.filter_by(path=str(path)).count() == 1:
+                    cached = cached.filter_by(path=str(path))
+                elif cached.filter_by(path=str(path)).count() > 1:
+                    raise ValueError("Duplicate entries in database")
+                else:
+                    raise ValueError(
+                        "Duplicate entries without matching path in database"
+                    )
+            cached = cached.one() if cached.count() == 1 else None
+            try:
+                return BinarySignature.fromModel(cached) if cached else None
+            except FileNotFoundError:
+                logger.warning(
+                    f"Cached binary {path} not found, it may have been moved. Updating database"
+                )
+                cached.path = str(path)
+                session.commit()
+                return BinarySignature.fromModel(cached)
 
     def __len__(self) -> int:
         with self.session() as session:
@@ -236,6 +253,8 @@ class HashRepository:
         if isinstance(signatures, BinarySignature):
             signatures = [signatures]
         for sig in signatures:
+            if len(sig.functionFeatureList) == 0:
+                raise ValueError("Signature has no function features")
             binary = self.binary_repo.store_signature(sig)
             for feat in sig.functionFeatureList:
                 feat.binary_id = binary.id
@@ -251,3 +270,36 @@ class HashRepository:
 
     def __len__(self) -> int:
         return len(self.binary_repo)
+
+
+if __name__ == "__main__":
+    # testing
+    from hashashin.metrics import (
+        compute_metrics,
+        compute_matrices,
+        show_similarity_matrix,
+        hash_paths,
+    )
+
+    from hashashin.main import ApplicationFactory, HashashinApplicationContext
+    from hashashin.classes import BinjaFeatureExtractor
+
+    app_context = HashashinApplicationContext(
+        extractor=BinjaFeatureExtractor(),
+        hash_repo=HashRepository(),
+        target_path=None,
+        save_to_db=True,
+    )
+    hashApp = ApplicationFactory.getHasher(app_context)
+
+    signatures = hash_paths("openssl", hashApp, paths="*[0-9][.][0-9]*")
+
+    minhash_similarities, jaccard_similarities, binaries = compute_matrices(signatures)
+    minhash_metrics = compute_metrics(minhash_similarities)
+    print(
+        f"Minhash precision: {minhash_metrics[0]}, recall: {minhash_metrics[1]}, f1: {minhash_metrics[2]}"
+    )
+    jaccard_metrics = compute_metrics(jaccard_similarities)
+    print(
+        f"Jaccard precision: {jaccard_metrics[0]}, recall: {jaccard_metrics[1]}, f1: {jaccard_metrics[2]}"
+    )

@@ -143,7 +143,18 @@ class BinaryHasherApplication(HashashinApplication):
                 logger.debug(f"Binary {t} already hashed, skipping")
                 yield cached
                 continue
-            target_signature = self.context.extractor.extract_from_file(t)
+            try:
+                target_signature = self.context.extractor.extract_from_file(
+                    t,
+                    progress_kwargs={
+                        "desc": f"Extracting {t}",
+                        "position": 1,
+                        "leave": False,
+                    },
+                )
+            except BinjaFeatureExtractor.NotABinaryError:
+                logger.info(f"Skipping non-binary {t}")
+                continue
             if self.context.save_to_db:
                 self.context.hash_repo.save(target_signature)
             yield target_signature
@@ -196,7 +207,7 @@ def main(args: Optional[argparse.Namespace] = None):
             "--status", "-db", action="store_true", help="Print database status"
         )
         db_group.add_argument(
-            "--drop", action="store_true", help="Drop database tables"
+            "--drop", type=str, default="all", help="Drop database tables"
         )
         app_group = parser.add_argument_group("Application operations")
         app_group.add_argument(
@@ -231,6 +242,9 @@ def main(args: Optional[argparse.Namespace] = None):
         return
 
     if args.drop:
+        # Confirm drop
+        if not input("You? [y/N] ").lower().startswith("y"):
+            return
         print("Dropping database tables...")
         SQLAlchemyBinarySignatureRepository().drop()
         SQLAlchemyFunctionFeatureRepository().drop()

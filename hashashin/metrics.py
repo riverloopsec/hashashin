@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from hashashin.main import BinaryHasherApplication
 from hashashin.classes import BinarySignature
-
+from sklearn.preprocessing import normalize
 from hashashin.utils import logger
 import logging
 
@@ -46,7 +46,7 @@ def hash_paths(
     return signatures
 
 
-def compute_matrices(signatures):
+def compute_matrices(signatures) -> tuple[np.ndarray, np.ndarray, list]:
     binaries = sorted(
         list([s.path.relative_to(Path(".").parent / "binary_data") for s in signatures])
     )
@@ -94,11 +94,49 @@ def compute_metrics(similarity_matrix) -> tuple[float, float, float]:
     return precision, recall, f1
 
 
+def reciprocal_rank_fusion(scores):
+    ranks = (1 + np.arange(len(scores))) / (1 + np.argsort(np.argsort(-scores)))
+    return np.sum(1 / ranks)
+
+
 def matrix_norms(fc1: np.ndarray, fc2: np.ndarray) -> float:
-    scores = np.matmul(fc1, fc2.T)
-    oneNorm = scores.max(axis=0).sum() / scores.shape[1]
-    infNorm = scores.max(axis=1).sum() / scores.shape[0]
-    return oneNorm + infNorm
+    # scores = np.matmul(normalize(fc1), normalize(fc2.T))
+    # oneNorm = scores.max(axis=0).sum() / scores.shape[1]
+    # infNorm = scores.max(axis=1).sum() / scores.shape[0]
+    # return oneNorm + infNorm
+    scores = np.matmul(normalize(fc1, axis=1), normalize(fc2.T, axis=0))
+    return (
+        scores.max(axis=0).sum() / scores.shape[1]
+        + scores.max(axis=1).sum() / scores.shape[0]
+    )
+
+
+def generate_matrix_norms(base_path, hashApp, paths):
+    signatures = hash_paths(base_path, hashApp, paths)
+    binaries = sorted(
+        list([s.path.relative_to(Path(".").parent / "binary_data") for s in signatures])
+    )
+    logger.info("Converting signatures to function matrices..")
+    np_signatures = [b.function_matrix for b in signatures]
+    norms = np.zeros((len(binaries), len(binaries)))
+    for i, j in tqdm(
+        np.ndindex(len(binaries), len(binaries)),
+        total=len(binaries) ** 2,
+        desc="Computing norms",
+    ):
+        if norms[j, i] != 0:
+            norms[i, j] = norms[j, i]
+            continue
+        norms[i, j] = matrix_norms(np_signatures[i], np_signatures[j])
+    p, r, f1 = compute_metrics(norms)
+    logger.info(f"Precision: {p}, Recall: {r}, F1: {f1}")
+    show_similarity_matrix(
+        norms,
+        binaries,
+        f"{base_path} matrix norms",
+        figsize=(20, 20) if len(binaries) > 10 else None,
+    )
+    return norms
 
 
 def main():
@@ -131,7 +169,7 @@ def main():
             f"Jaccard precision: {jaccard_metrics[0]}, recall: {jaccard_metrics[1]}, f1: {jaccard_metrics[2]}"
         )
 
-    run_curl = True
+    run_curl = False
     if run_curl:
         signatures = hash_paths("libcurl", hashApp, paths="*[0-9][_][0-9]*")
 
@@ -146,12 +184,10 @@ def main():
         print(
             f"Jaccard precision: {jaccard_metrics[0]}, recall: {jaccard_metrics[1]}, f1: {jaccard_metrics[2]}"
         )
-    breakpoint()
 
-    curl_7_8 = hash_paths("libcurl", hashApp, "*7_8")
-    curl_7_8_1 = hash_paths("libcurl", hashApp, "*7_8_1")
-
-    breakpoint()
+    # norms = generate_matrix_norms("libcurl", hashApp, paths="*[0-9]_[0-9]*")
+    norms = generate_matrix_norms("openssl", hashApp, paths="*[0-9].[0-9]*")
+    print(norms)
 
 
 if __name__ == "__main__":

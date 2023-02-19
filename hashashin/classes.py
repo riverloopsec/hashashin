@@ -12,6 +12,7 @@ from binaryninja import Function as BinaryNinjaFunction  # type: ignore
 from binaryninja import BinaryView  # type: ignore
 from binaryninja import enums
 from abc import ABC
+from tqdm import tqdm
 
 from hashashin.feature_extractors import compute_constants
 from hashashin.feature_extractors import compute_cyclomatic_complexity
@@ -47,7 +48,7 @@ class BinarySigModel(ORM_BASE):
     def fromBinarySignature(cls, sig: "BinarySignature") -> "BinarySigModel":
         with open(sig.path, "rb") as f:
             return cls(
-                hash=xxhash.xxh64(f.read()).digest(),
+                hash=sig.binary_hash,
                 path=str(sig.path),
                 sig=sig.signature,
                 extraction_engine=str(sig.extraction_engine),
@@ -139,7 +140,9 @@ class FeatureExtractor:
     def extract(self, func: AbstractFunction) -> "FunctionFeatures":
         raise NotImplementedError
 
-    def extract_from_file(self, path: Path) -> "BinarySignature":
+    def extract_from_file(
+        self, path: Path, progress_kwargs: Optional[dict]
+    ) -> "BinarySignature":
         raise NotImplementedError
 
     def __repr__(self):
@@ -152,6 +155,9 @@ class FeatureExtractor:
 
     def get_abstract_function(self, path: Path, name: str) -> AbstractFunction:
         raise NotImplementedError
+
+    class NotABinaryError(Exception):
+        pass
 
 
 class BinjaFeatureExtractor(FeatureExtractor):
@@ -183,35 +189,40 @@ class BinjaFeatureExtractor(FeatureExtractor):
             edge_histogram=compute_edge_taxonomy_histogram(func),
         )
 
-    def extract_from_file(self, path: Path) -> "BinarySignature":
+    def extract_from_file(self, path: Path, progress_kwargs=None) -> "BinarySignature":
         """
         Extracts features from all functions in a binary.
         :param path: path to binary
+        :param progress_kwargs: optionally pass tqdm kwargs to show progress
         :return: list of features
         """
-        if not path.exists():
+        if not path.is_file():
             raise FileNotFoundError(f"File {path} does not exist")
+        progress_kwargs = (
+            {"disable": "True"} if progress_kwargs is None else progress_kwargs
+        )
         with open_view(path) as bv:
-            return BinarySignature(
+            bs = BinarySignature(
                 path=path,
                 functionFeatureList=[
                     self.extract(BinjaFunction.fromFunctionRef(func))
-                    for func in bv.functions
+                    for func in tqdm(bv.functions, **progress_kwargs)
                 ],
                 extraction_engine=self,
             )
+            if not bs.functionFeatureList:
+                raise self.NotABinaryError(f"No functions found in {path}")
+            return bs
 
     def get_abstract_function(self, path: Path, name: str) -> AbstractFunction:
         return BinjaFunction.fromFile(path, name)
 
 
 def extractor_from_name(name: str) -> FeatureExtractor:
-    extractor = None
     if name.startswith(BinjaFeatureExtractor.__name__):
         extractor = BinjaFeatureExtractor()
-    if name == str(extractor):
-        return extractor
-    if extractor is not None:
+        if name == str(extractor):
+            return extractor
         raise ValueError(f"Version mismatch, expected {extractor.version}, got {name}")
     raise ValueError(f"Unknown extractor {name}")
 
@@ -555,6 +566,19 @@ class BinarySignature:
         else:
             logger.debug("Using cached signature.")
         return self.cached_signature
+
+    @property
+    def function_matrix(self) -> npt.NDArray[np.uint32]:
+        return np.array([f.asArray() for f in self.functionFeatureList])
+
+    @staticmethod
+    def hash_file(path: Path) -> bytes:
+        with open(path, "rb") as f:
+            return xxhash.xxh64(f.read()).digest()
+
+    @property
+    def binary_hash(self) -> bytes:
+        return self.hash_file(self.path)
 
     @staticmethod
     def minhash_similarity(
