@@ -99,15 +99,26 @@ def reciprocal_rank_fusion(scores):
 
 
 def matrix_norms(fc1: np.ndarray, fc2: np.ndarray) -> float:
-    # scores = np.matmul(normalize(fc1), normalize(fc2.T))
-    # oneNorm = scores.max(axis=0).sum() / scores.shape[1]
-    # infNorm = scores.max(axis=1).sum() / scores.shape[0]
-    # return oneNorm + infNorm
     scores = np.matmul(normalize(fc1, axis=1), normalize(fc2.T, axis=0))
     return (
         scores.max(axis=0).sum() / scores.shape[1]
         + scores.max(axis=1).sum() / scores.shape[0]
     )
+
+
+def stacked_norms(fc1: list[np.ndarray], fc2: np.ndarray) -> list[float]:
+    """Compute the norms of the stacked matrix of fc1 against fc2."""
+    return [matrix_norms(x, fc2) for x in fc1]
+    # if len(fc1.shape) != 3 or len(fc2.shape) != 3:
+    #     raise ValueError("supplied matrices must be 3D")
+    # breakpoint()
+    # fc1_norm = np.stack([normalize(x, axis=1) for x in fc1])
+    # fc2_norm = np.stack([normalize(x, axis=0) for x in fc2.T])
+    # scores = np.matmul(fc1_norm, fc2_norm.T)
+    # max_row_scores = np.max(scores, axis=2)
+    # max_col_scores = np.max(scores, axis=1)
+    # norms = (max_row_scores.sum(axis=1) + max_col_scores.sum(axis=0)) / (scores.shape[1] + scores.shape[0])
+    # return norms
 
 
 def generate_matrix_norms(base_path, hashApp, paths):

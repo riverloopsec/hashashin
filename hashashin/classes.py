@@ -676,3 +676,12 @@ class BinarySignature:
         return self.jaccard_similarity(
             set(self.functionFeatureList), set(other.functionFeatureList)
         )
+
+    def __xor__(self, other) -> float:
+        if isinstance(other, bytes):
+            return bytes([a ^ b for a, b in zip(self.signature, other)]).count(b'\x00') / len(self.signature)
+        if isinstance(other, BinarySignature):
+            return bytes([a ^ b for a, b in zip(self.signature, other.signature)]).count(b'\x00') / len(self.signature)
+        if isinstance(other, BinarySigModel):
+            return bytes([a ^ b for a, b in zip(self.signature, other.sig)]).count(b'\x00') / len(self.signature)
+        raise TypeError(f"Cannot xor BinarySigModel with {type(other)}")

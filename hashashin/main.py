@@ -20,7 +20,7 @@ from hashashin.db import (
     HashRepository,
 )
 from hashashin.classes import BinjaFeatureExtractor, FeatureExtractor
-from hashashin.metrics import matrix_norms
+from hashashin.metrics import matrix_norms, stacked_norms
 from hashashin.utils import get_binaries
 from hashashin.utils import logger
 import numpy as np
@@ -236,17 +236,17 @@ def main(args: Optional[argparse.Namespace] = None):
         )
         demo_group = parser.add_argument_group("Demo operations")
         demo_group.add_argument(
-            "--fast-match", type=str, metavar="BINARY_PATH", help="Fast match a binary against the database"
+            "--fast-match", type=str, nargs="+", metavar="BINARY_PATH", help="Fast match a binary against the database"
         )
         demo_group.add_argument(
-            "--function-match", type=str, metavar="BINARY_PATH",
-            help="Match a given function against database"
+            "--robust-match", type=str, nargs="+", metavar="BINARY_PATH",
+            help="Match a given binary against database"
         )
         demo_group.add_argument(
             "--matches", type=int, metavar="N", help="Number of matches to return"
         )
         args = parser.parse_args()
-        if not ((args.status or args.drop) or (args.task and args.target) or (args.fast_match or args.function_match)):
+        if not ((args.status or args.drop) or (args.task and args.target) or (args.fast_match or args.robust_match)):
             parser.error("--status or --task and --target are required options")
 
     if args.status:
@@ -268,76 +268,52 @@ def main(args: Optional[argparse.Namespace] = None):
         return
 
     if args.fast_match:
-        args.fast_match = Path(__file__).parent / args.fast_match
-        if not args.fast_match.is_file() or len(get_binaries(args.fast_match, silent=True)) == 0:
-            logger.error(f"{args.fast_match} is not a valid binary")
+        for target in args.fast_match:
+            target = Path(__file__).parent / target
+            if not target.is_file() or len(get_binaries(target, silent=True)) == 0:
+                logger.debug(f"{target} is not a valid binary")
+                continue
+            hash_repo = HashRepository()
+            target = hash_repo.get(target)
+            if target is None:
+                logger.error(f"Failed to hash {target}")
+                continue
+            logger.info(f"Fast matching target {target.path.absolute().relative_to(Path(__file__).parent / 'binary_data')}")
+            matches = hash_repo.binary_repo.fast_match(target, args.threshold)
+            matches = list(filter(lambda x: x.path != str(target.path), matches))
+            logger.info(f"Found {len(matches)} matches above {args.threshold} similarity")
+            for match in matches:
+                print(f"\t{match.path}: {target ^ match.sig}")
             print()
-            return
-        hash_repo = HashRepository()
-        target = hash_repo.get(args.fast_match)
-        if target is None:
-            logger.error(f"Failed to hash {args.fast_match}")
-            return
-        logger.info(f"Fast matching target {target.path.name}: {target.signature.hex()}")
-        matches = hash_repo.binary_repo.fast_match(target)
-        matches = list(filter(lambda x: x.path != str(target.path), matches))
-        logger.info(f"Found {len(matches)} matches")
-        for match in matches:
-            print(f"\t{match.path} {match.sig.hex()}")
-        print()
         return
 
-    if args.function_match:
+    if args.robust_match:
         hash_repo = HashRepository()
-        target = hash_repo.get(args.function_match)
-        # logger.info("Choosing top 10 functions by dominator signature")
-        # candidate_functions = sorted(target.functionFeatureList, key=lambda f: f.dominator_signature)
-        logger.info("Stacking candidate functions into matrix")
-        candidate_np_functions = np.stack([f.asArray() for f in target.functionFeatureList])
-        binary_scores = {}
+        targets = [hash_repo.get(path) for path in args.robust_match if len(get_binaries(Path(path), silent=True)) > 0]
+        if any(target is None for target in targets):
+            logger.error(f"Failed to hash {args.robust_match}")
+            return
+        # target = hash_repo.get(args.robust_match)
+        # logger.info("Stacking target functions into matrix")
+        target_np_functions = [
+                np.stack([f.asArray() for f in target.functionFeatureList])
+                for target in tqdm(targets, desc="Collecting target functions")
+            ]
+        binary_scores: list[dict[str, float]] = [{} for _ in range(len(target_np_functions))]
+        logger.info("Collecting binaries from database...")
         for binary in tqdm(hash_repo.binary_repo.getAll(), desc="Scoring binaries"):
             features_matrix, features = hash_repo.function_repo.get_feature_matrix(binary.path)
-            binary_scores[binary.path] = matrix_norms(candidate_np_functions, features_matrix)
-        logger.info(f"Top 5 matches:\n{sorted(binary_scores.items(), key=lambda x: x[1], reverse=True)[:5]}")
-        # target_fn = list(filter(lambda x: args.function_match[1] in x.function.name, target.functionFeatureList))
-        # breakpoint()
-        # if len(target_fn) > 1:
-        #     raise NotImplementedError("Multiple matches not implemented")
-        # if len(target_fn) == 0:
-        #     raise ValueError("Function name not found")
-        # target_fn = target_fn[0]
-        # logger.info(f"Target {target.path}: {target_fn.function.name} {target_fn.signature.hex()}")
-        # matches = hash_repo.function_repo.match(target_fn, threshold=args.threshold)
-        # logger.info(f"Found {len(matches)} matches above threshold")
-        # logger.info(f"Closest match ({matches[0] ^ target_fn}): {matches[0]} {matches[0].function.path} {matches[0].signature.hex()}")
-        # binary_matches = Counter([x.function.path for x in matches])
-        # logger.info(f"Found {len(binary_matches)} binaries with matching functions:\n{sorted(binary_matches.items())}")
-        # breakpoint()
-        # likely_matches = {}
-        # for match in tqdm(matches, desc="Calculating likely matches"):
-        #     likely_matches[match.function.path] = likely_matches.get(match.function.path, 0) + (match ^ target_fn)
-        # for b, score in tqdm(likely_matches.items(), desc="Normalizing matches"):
-        #     if not Path(b).is_file():
-        #         if Path(b.replace("hashashin/", "")).is_file():
-        #             b = b.replace("hashashin/", "")
-        #         else:
-        #             logger.warning(f"Binary {b} not found, skipping")
-        #             continue
-        #     likely_matches[b] = score / len(hash_repo.binary_repo.get(b).functionFeatureList)
-        #
-        # percentage_matches = {}
-        # for b, count in tqdm(binary_matches.items(), desc="Calculating percentage matches", disable=not args.progress):
-        #     if not Path(b).is_file():
-        #         if Path(b.replace("hashashin/", "")).is_file():
-        #             b = b.replace("hashashin/", "")
-        #         else:
-        #             logger.warning(f"Binary {b} not found, skipping")
-        #             continue
-        #     funcs = len(hash_repo.binary_repo.get(b).functionFeatureList)
-        #     percentage_matches[b] = count / funcs
-        # breakpoint()
-        # binary_likelihood = sorted(percentage_matches.items(), key=lambda x: x[1], reverse=True)
-        # logger.info(f"Top 3 most likely binaries (path, likelihood):\n{binary_likelihood[:3]}")
+            scores = stacked_norms(target_np_functions, features_matrix)
+            for i, score in enumerate(scores):
+                binary_scores[i][binary.path] = score
+
+        for i, target in enumerate(targets):
+            print(f"Top 5 scores for {target.path.absolute().relative_to(Path(__file__).parent / 'binary_data')}:")
+            top5 = sorted(binary_scores[i].items(), key=lambda x: x[1], reverse=True)[:5]
+            spaces = max([len(str(x[0])) for x in top5])
+            format = f"{{path:{{spaces}}}}: {{score}}"
+            print("\t" + "\n\t".join([format.format(path=str(x[0]), score=x[1], spaces=spaces) for x in top5]) + "\n")
+
         return
 
     factory = ApplicationFactory(
