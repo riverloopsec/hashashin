@@ -5,7 +5,8 @@ binary_data/
 fuzzy_hashing_papers/
 profile_code.py
 .gitignore
-*.hash.json
+*.db
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -117,3 +118,5 @@ venv.bak/
 tests/
 
 .DS_Store
+/hashashin/testing.py
+/hashashin/pycrunch-recordings

@@ -1,0 +1,3 @@
+[submodule "flowslicer"]
+	path = flowslicer
+	url = git@github.com:praxiseng/flowslicer.git

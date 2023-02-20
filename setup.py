@@ -1,8 +1,8 @@
-import setuptools
+import setuptools  # type: ignore
 
 installed_api = False
 try:
-    import binaryninja
+    import binaryninja  # type: ignore
 except ImportError:
     import os
 
@@ -25,14 +25,16 @@ except ImportError:
 setuptools.setup(
     name="hashashin",
     version="0.1.0",
+    license="MIT",
     author="Jonathan Prokos",
     author_email="jonathan.prokos@twosixtech.com",
     description="Binary Fingerprint Library",
     packages=setuptools.find_packages(),
     install_requires=[
         "tqdm",
-        "dill",
         "numpy",
+        "xxhash",
+        "cbor2",
     ],
     extras_require={
         "dev": [
@@ -45,7 +47,8 @@ setuptools.setup(
     python_requires=">=3.9",
     entry_points={
         "console_scripts": [
-            "hashashin = hashashin.lsh:main",
+            "hashashin = hashashin.main:main",
+            "flowslicer = flowslicer.flowslicer:Main",
         ]
     },
 )
