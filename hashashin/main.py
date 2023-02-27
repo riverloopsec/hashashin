@@ -1,29 +1,25 @@
-import glob
-import os
+import argparse
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Collection, Iterable, Optional, Union, Generator
-import argparse
-from collections import Counter
+from typing import Generator
+from typing import Iterable
+from typing import Optional
+from typing import Union
 
-import magic
+import numpy as np
 from tqdm import tqdm
 
 from hashashin.classes import BinarySignature
-from hashashin.db import (
-    BinarySignatureRepository,
-    FunctionFeatureRepository,
-    SQLAlchemyBinarySignatureRepository,
-    SQLAlchemyFunctionFeatureRepository,
-    HashRepository,
-)
-from hashashin.classes import BinjaFeatureExtractor, FeatureExtractor
-from hashashin.metrics import matrix_norms, stacked_norms
+from hashashin.classes import BinjaFeatureExtractor
+from hashashin.classes import FeatureExtractor
+from hashashin.db import HashRepository
+from hashashin.db import SQLAlchemyBinarySignatureRepository
+from hashashin.db import SQLAlchemyFunctionFeatureRepository
+from hashashin.metrics import stacked_norms
 from hashashin.utils import get_binaries
 from hashashin.utils import logger
-import numpy as np
 
 logger = logger.getChild(Path(__file__).name)
 

@@ -1,28 +1,21 @@
-import csv
-import json
-import logging
-import os
+from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, List, Optional, Union, Collection
-from abc import ABC
-from tqdm import tqdm
+from typing import Collection
+from typing import List
+from typing import Optional
+from typing import Union
+
 import numpy as np
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-import xxhash
-from sqlalchemy import Column, ForeignKey, Integer, LargeBinary, String, create_engine, cast
-
-from sqlalchemy.orm import Session, relationship, sessionmaker
-from sqlalchemy.orm.relationships import RelationshipProperty
-
-from hashashin.classes import (
-    BinarySigModel,
-    FunctionFeatModel,
-    BinarySignature,
-    FunctionFeatures,
-    ORM_BASE,
-)
+from hashashin.classes import BinarySigModel
+from hashashin.classes import BinarySignature
+from hashashin.classes import FunctionFeatModel
+from hashashin.classes import FunctionFeatures
+from hashashin.classes import ORM_BASE
 from hashashin.utils import logger
 
 logger = logger.getChild(Path(__file__).name)
@@ -368,7 +361,6 @@ if __name__ == "__main__":
     from hashashin.metrics import (
         compute_metrics,
         compute_matrices,
-        show_similarity_matrix,
         hash_paths,
     )
 

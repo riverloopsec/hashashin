@@ -1,19 +1,34 @@
-import logging
-import os
-from typing import Optional, Any, Iterable, Generator, Union
+from typing import Optional, Any, Iterable
 import zlib
-import json
 
+import zlib
+from abc import ABC
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+from typing import Iterable
+from typing import Optional
+
 import numpy as np
 import numpy.typing as npt
-from dataclasses import dataclass
-from binaryninja import Function as BinaryNinjaFunction  # type: ignore
+import xxhash
 from binaryninja import BinaryView  # type: ignore
+from binaryninja import Function as BinaryNinjaFunction  # type: ignore
+from binaryninja import core_version
 from binaryninja import enums
-from abc import ABC
+from binaryninja import open_view
+from sqlalchemy import Column
+from sqlalchemy import ForeignKey
+from sqlalchemy import Integer
+from sqlalchemy import LargeBinary
+from sqlalchemy import String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from sqlalchemy.orm.relationships import RelationshipProperty
 from tqdm import tqdm
 
+from hashashin.feature_extractors import EDGES
+from hashashin.feature_extractors import VERTICES
 from hashashin.feature_extractors import compute_constants
 from hashashin.feature_extractors import compute_cyclomatic_complexity
 from hashashin.feature_extractors import compute_dominator_signature
@@ -21,15 +36,9 @@ from hashashin.feature_extractors import compute_edge_taxonomy_histogram
 from hashashin.feature_extractors import compute_instruction_histogram
 from hashashin.feature_extractors import compute_vertex_taxonomy_histogram
 from hashashin.feature_extractors import get_fn_strings
-from hashashin.feature_extractors import VERTICES, EDGES
-from hashashin.utils import split_int_to_uint32, merge_uint32_to_int
-from sqlalchemy import Column, ForeignKey, Integer, LargeBinary, String
-import xxhash
-from sqlalchemy.orm.relationships import RelationshipProperty
-from sqlalchemy.orm import Session, relationship
-from sqlalchemy.ext.declarative import declarative_base
-from binaryninja import core_version, open_view
 from hashashin.utils import logger
+from hashashin.utils import merge_uint32_to_int
+from hashashin.utils import split_int_to_uint32
 
 logger = logger.getChild(Path(__file__).name)
 ORM_BASE: Any = declarative_base()

@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import logging
 import os
 import time
-from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Callable, Optional, Union
+from typing import Union
 
 import numpy as np
 from binaryninja import BasicBlock  # type: ignore
 from binaryninja import BinaryView  # type: ignore
-from binaryninja import enums  # type: ignore
 from binaryninja import Function as BinaryNinjaFunction
+from binaryninja import enums  # type: ignore
+
 from hashashin.utils import logger
 
 logger = logger.getChild(os.path.basename(__file__))

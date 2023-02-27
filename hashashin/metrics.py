@@ -1,13 +1,13 @@
-import glob
-import seaborn as sns  # type: ignore
-import numpy as np
+import logging
 from pathlib import Path
+
+import numpy as np
+import seaborn as sns  # type: ignore
+from sklearn.preprocessing import normalize
 from tqdm import tqdm
 
 from hashashin.classes import BinarySignature
-from sklearn.preprocessing import normalize
 from hashashin.utils import logger
-import logging
 
 logger.setLevel(logging.INFO)
 logger = logger.getChild(Path(__file__).name)
