@@ -35,16 +35,18 @@ setuptools.setup(
         "numpy",
         "xxhash",
         "cbor2",
+        "SQLAlchemy",
+        "python-magic",
+        "scikit-learn",
+        # "matplotlib",
+        # "pandas",
+        # "seaborn",
     ],
-    extras_require={
-        "dev": [
-            "jupyter",
-            "seaborn",
-            "matplotlib",
-            "python-magic",
-        ],
-    },
-    python_requires=">=3.9",
+    # extras_require={
+    #     "dev": [
+    #     ],
+    # },
+    python_requires=">=3.8",
     entry_points={
         "console_scripts": [
             "hashashin = hashashin.main:main",

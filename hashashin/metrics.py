@@ -2,9 +2,10 @@ import logging
 from pathlib import Path
 
 import numpy as np
-import seaborn as sns  # type: ignore
+# import seaborn as sns  # type: ignore
 from sklearn.preprocessing import normalize
 from tqdm import tqdm
+from typing import Tuple, List
 
 from hashashin.classes import BinarySignature
 from hashashin.utils import logger
@@ -13,15 +14,15 @@ logger.setLevel(logging.INFO)
 logger = logger.getChild(Path(__file__).name)
 
 
-def show_similarity_matrix(mat, labels, title=None, font_scale=0.7, figsize=(14, 14)):
-    if isinstance(mat, list):
-        mat = np.array(mat)
-    if isinstance(labels, list):
-        labels = np.array(labels)
-    sns.set(font_scale=font_scale, rc={"figure.figsize": figsize, "axes.titlesize": 20})
-    sns.heatmap(
-        mat, xticklabels=labels, yticklabels=labels, cmap="Blues", annot=True
-    ).set(title=title)
+# def show_similarity_matrix(mat, labels, title=None, font_scale=0.7, figsize=(14, 14)):
+#     if isinstance(mat, list):
+#         mat = np.array(mat)
+#     if isinstance(labels, list):
+#         labels = np.array(labels)
+#     sns.set(font_scale=font_scale, rc={"figure.figsize": figsize, "axes.titlesize": 20})
+#     sns.heatmap(
+#         mat, xticklabels=labels, yticklabels=labels, cmap="Blues", annot=True
+#     ).set(title=title)
 
 
 def hash_paths(
@@ -45,7 +46,7 @@ def hash_paths(
     return signatures
 
 
-def compute_matrices(signatures) -> tuple[np.ndarray, np.ndarray, list]:
+def compute_matrices(signatures) -> Tuple[np.ndarray, np.ndarray, list]:
     binaries = sorted(
         list([s.path.relative_to(Path(".").parent / "binary_data") for s in signatures])
     )
@@ -74,7 +75,7 @@ def compute_matrices(signatures) -> tuple[np.ndarray, np.ndarray, list]:
     return minhash_similarities, jaccard_similarities, binaries
 
 
-def compute_metrics(similarity_matrix) -> tuple[float, float, float]:
+def compute_metrics(similarity_matrix) -> Tuple[float, float, float]:
     # Compute metrics
     tp = np.trace(similarity_matrix > 0.9) / len(similarity_matrix)
     fn = np.trace(similarity_matrix <= 0.9) / len(similarity_matrix)
@@ -106,7 +107,7 @@ def matrix_norms(fc1: np.ndarray, fc2: np.ndarray) -> float:
     )
 
 
-def stacked_norms(fc1: list[np.ndarray], fc2: np.ndarray) -> list[float]:
+def stacked_norms(fc1: List[np.ndarray], fc2: np.ndarray) -> List[float]:
     """Compute the norms of the stacked matrix of fc1 against fc2."""
     return [matrix_norms(x, fc2) for x in fc1]
     # if len(fc1.shape) != 3 or len(fc2.shape) != 3:

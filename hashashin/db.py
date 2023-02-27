@@ -6,6 +6,7 @@ from typing import Collection
 from typing import List
 from typing import Optional
 from typing import Union
+from typing import Tuple
 
 import numpy as np
 from sqlalchemy import create_engine
@@ -29,7 +30,7 @@ class RepositoryType(Enum):
 
 @dataclass
 class RepositoryConfig(ABC):
-    db_type: tuple[RepositoryType, RepositoryType] = (
+    db_type: Tuple[RepositoryType, RepositoryType] = (
         RepositoryType.NONE,
         RepositoryType.NONE,
     )
@@ -47,11 +48,11 @@ class BinarySignatureRepository:
 
     def match_signature(
         self, signature: BinarySignature, threshold: float = 0.5
-    ) -> list[BinarySignature]:
+    ) -> List[BinarySignature]:
         """Return all matching signatures with a similarity above the threshold."""
         raise NotImplementedError
 
-    def fast_match(self, signature: BinarySignature, threshold: float = 0.5) -> list[BinarySignature]:
+    def fast_match(self, signature: BinarySignature, threshold: float = 0.5) -> List[BinarySignature]:
         """Return all matching signatures with a similarity above the threshold."""
         raise NotImplementedError
 
@@ -87,7 +88,7 @@ class FunctionFeatureRepository:
     def get_bin_count(self, binary_id: int):
         raise NotImplementedError
 
-    def get_feature_matrix(self, binary: Optional[str]) -> tuple[np.array, list[FunctionFeatModel]]:
+    def get_feature_matrix(self, binary: Optional[str]) -> Tuple[np.array, List[FunctionFeatModel]]:
         raise NotImplementedError
 
 
@@ -134,7 +135,7 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
         with self.session() as session:
             return session.query(FunctionFeatModel).all()
 
-    def get_feature_matrix(self, binary_path: Optional[Path]) -> tuple[np.array, list[FunctionFeatModel]]:
+    def get_feature_matrix(self, binary_path: Optional[Path]) -> Tuple[np.array, List[FunctionFeatModel]]:
         with self.session() as session:
             features = session.query(FunctionFeatModel)
             if binary_path is not None:
@@ -199,7 +200,7 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
             session.refresh(binary)
         return binary
 
-    def fast_match(self, signature: BinarySignature, threshold: float = 0.5) -> list[BinarySignature]:
+    def fast_match(self, signature: BinarySignature, threshold: float = 0.5) -> List[BinarySignature]:
         with self.session() as session:
             if threshold == 0:
                 return (
@@ -218,7 +219,7 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
 
     def match_signature(
         self, signature: BinarySignature, threshold: float = 0.5
-    ) -> list[BinarySignature]:
+    ) -> List[BinarySignature]:
         logger.warning("This is a very slow operation. (O(n))")
         with self.session() as session:
             if threshold == 0:
@@ -269,7 +270,7 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
                 session.commit()
                 return BinarySignature.fromModel(cached)
 
-    def getAll(self) -> list[BinarySignature]:
+    def getAll(self) -> List[BinarySignature]:
         with self.session() as session:
             return [BinarySignature.fromModel(x) for x in session.query(BinarySigModel).all()]
 
@@ -349,7 +350,7 @@ class HashRepository:
 
     def match(
         self, signature: BinarySignature, threshold: float = 0.5
-    ) -> list[BinarySignature]:
+    ) -> List[BinarySignature]:
         return self.binary_repo.match_signature(signature, threshold)
 
     def __len__(self) -> int:

@@ -7,6 +7,7 @@ from typing import Generator
 from typing import Iterable
 from typing import Optional
 from typing import Union
+from typing import Tuple, List
 
 import numpy as np
 from tqdm import tqdm
@@ -62,7 +63,7 @@ class HashashinApplication(ABC):
 
 
 class BinaryMatcherApplication(HashashinApplication):
-    def _match(self, sig: BinarySignature) -> list[BinarySignature]:
+    def _match(self, sig: BinarySignature) -> List[BinarySignature]:
         """
         Match a binary signature against the database.
         :param sig: signature to match
@@ -72,7 +73,7 @@ class BinaryMatcherApplication(HashashinApplication):
             sig, self.context.sig_match_threshold
         )
 
-    def step(self) -> Iterable[tuple[BinarySignature, list[BinarySignature]]]:
+    def step(self) -> Iterable[Tuple[BinarySignature, List[BinarySignature]]]:
         """
         Match all binaries in the target path against the database.
         :return: a generator of tuples containing the target signature and a list of matches sorted by distance
@@ -96,7 +97,7 @@ class BinaryMatcherApplication(HashashinApplication):
                 print(f"\t{match}")
             yield target_signature, matches
 
-    def run(self) -> list[tuple[BinarySignature, list[BinarySignature]]]:
+    def run(self) -> List[Tuple[BinarySignature, List[BinarySignature]]]:
         logger.info("Matching binaries")
         return list(self.step())
 
@@ -158,7 +159,7 @@ class BinaryHasherApplication(HashashinApplication):
                 self.context.hash_repo.save(target_signature)
             yield target_signature
 
-    def run(self) -> list[BinarySignature]:
+    def run(self) -> List[BinarySignature]:
         logger.info(f"Hashing {self.context.target_path}")
         return list(self.step())
 
