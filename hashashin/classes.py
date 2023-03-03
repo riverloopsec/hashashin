@@ -6,6 +6,7 @@ from typing import Any, List
 from typing import Iterable
 from typing import Optional
 from typing import Set
+from typing import Dict
 
 import numpy as np
 import numpy.typing as npt
@@ -169,6 +170,9 @@ class FeatureExtractor:
     def extract(self, func: AbstractFunction) -> "FunctionFeatures":
         raise NotImplementedError
 
+    def extract_from_bv(self, bv: BinaryView, progress_kwargs=None) -> "BinarySignature":
+        raise NotImplementedError
+
     def extract_from_file(
             self, path: Path, progress_kwargs: Optional[dict] = None
     ) -> "BinarySignature":
@@ -192,17 +196,7 @@ class FeatureExtractor:
 class BinjaFeatureExtractor(FeatureExtractor):
     version = core_version()
 
-    def extract(self, function: AbstractFunction) -> "FunctionFeatures":
-        """
-        Extracts features from a function.
-        :param function: function to extract features from
-        :return: features
-        """
-        if not isinstance(function.function, BinaryNinjaFunction):
-            raise ValueError(
-                f"Expected Binary Ninja function, got {type(function.function)}"
-            )
-        func: BinaryNinjaFunction = function.function
+    def _extract(self, func: BinaryNinjaFunction) -> "FunctionFeatures":
         return FunctionFeatures(
             extraction_engine=self,
             function=BinjaFunction.fromFunctionRef(func),
@@ -218,6 +212,41 @@ class BinjaFeatureExtractor(FeatureExtractor):
             edge_histogram=compute_edge_taxonomy_histogram(func),
         )
 
+    def extract(self, function: AbstractFunction) -> "FunctionFeatures":
+        """
+        Extracts features from a function.
+        :param function: function to extract features from
+        :return: features
+        """
+        if not isinstance(function, (AbstractFunction, BinaryNinjaFunction)):
+            raise ValueError(
+                f"Expected Abstract or Binary Ninja function, got {type(function)}"
+            )
+        if isinstance(function, BinaryNinjaFunction):
+            func: BinaryNinjaFunction = function
+        else:
+            func = function.function
+        return self._extract(func)
+
+    def extract_from_bv(self, bv: BinaryView, progress_kwargs=None) -> "BinarySignature":
+        """
+        Extracts features from all functions in a binary.
+        :param bv: binary view
+        :param progress_kwargs: optionally pass tqdm kwargs to show progress
+        :return: list of features
+        """
+        progress_kwargs = (
+            {"disable": "True"} if progress_kwargs is None else progress_kwargs
+        )
+        return BinarySignature(
+            path=Path(bv.file.filename),
+            functionFeatureList=[
+                self.extract(BinjaFunction.fromFunctionRef(func))
+                for func in tqdm(bv.functions, **progress_kwargs)
+            ],
+            extraction_engine=self,
+        )
+
     def extract_from_file(self, path: Path, progress_kwargs=None) -> "BinarySignature":
         """
         Extracts features from all functions in a binary.
@@ -231,14 +260,7 @@ class BinjaFeatureExtractor(FeatureExtractor):
             {"disable": "True"} if progress_kwargs is None else progress_kwargs
         )
         with open_view(path) as bv:
-            bs = BinarySignature(
-                path=path,
-                functionFeatureList=[
-                    self.extract(BinjaFunction.fromFunctionRef(func))
-                    for func in tqdm(bv.functions, **progress_kwargs)
-                ],
-                extraction_engine=self,
-            )
+            bs = self.extract_from_bv(bv, progress_kwargs)
             if not bs.functionFeatureList:
                 raise self.NotABinaryError(f"No functions found in {path}")
             return bs
@@ -522,6 +544,20 @@ class FunctionFeatures:
     @property
     def signature(self) -> bytes:
         return zlib.compress(self.asBytes())
+
+    def get_feature_dict(self) -> Dict[str, Any]:
+        return {
+            "cyclomatic_complexity": self.cyclomatic_complexity,
+            "num_instructions": self.num_instructions,
+            "num_strings": self.num_strings,
+            "max_string_length": self.max_string_length,
+            "vertex_histogram": self.vertex_histogram,
+            "edge_histogram": self.edge_histogram,
+            "instruction_histogram": self.instruction_histogram,
+            "dominator_signature": self.dominator_signature,
+            "constants": self.constants,
+            "strings": self.strings,
+        }
 
     def __hash__(self) -> int:
         return hash(self.signature)

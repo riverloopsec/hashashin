@@ -199,50 +199,56 @@ class ApplicationFactory:
         return matcher
 
 
+def get_parser():
+    parser = argparse.ArgumentParser()
+    db_group = parser.add_argument_group("Database operations")
+    db_group.add_argument(
+        "--status", "-db", action="store_true", help="Print database status"
+    )
+    db_group.add_argument(
+        "--drop", type=str, default=None, help="D" + "rop database tables. Accepts \"all\" or binary path"
+    )
+    app_group = parser.add_argument_group("Application operations")
+    app_group.add_argument(
+        "--task",
+        "-t",
+        type=str,
+        choices=[
+            t.value for t in Task if isinstance(t.value, str)
+        ],  # mypy type fix
+        help="Application task",
+    )
+    app_group.add_argument(
+        "--target", "-b", type=str, help="Target binary or directory"
+    )
+    app_group.add_argument(
+        "--save", "-s", action="store_true", help="Save results to database"
+    )
+    app_group.add_argument(
+        "--threshold", "-r", type=float, default=0.5, help="Signature match threshold"
+    )
+    app_group.add_argument(
+        "--progress", "-p", action="store_true", help="Show progress bar"
+    )
+    demo_group = parser.add_argument_group("Demo operations")
+    demo_group.add_argument(
+        "--fast-match", type=str, nargs="+", metavar="BINARY_PATH", help="Fast match a binary against the database"
+    )
+    demo_group.add_argument(
+        "--robust-match", type=str, nargs="+", metavar="BINARY_PATH",
+        help="Match a given binary against database"
+    )
+    demo_group.add_argument(
+        "--matches", type=int, metavar="N", help="Number of matches to return"
+    )
+    return parser
+
+
 def main(args: Optional[argparse.Namespace] = None):
     if args is None:
-        parser = argparse.ArgumentParser()
-        db_group = parser.add_argument_group("Database operations")
-        db_group.add_argument(
-            "--status", "-db", action="store_true", help="Print database status"
-        )
-        db_group.add_argument(
-            "--drop", type=str, default=None, help="D"+"rop database tables. Accepts \"all\" or binary path"
-        )
-        app_group = parser.add_argument_group("Application operations")
-        app_group.add_argument(
-            "--task",
-            "-t",
-            type=str,
-            choices=[
-                t.value for t in Task if isinstance(t.value, str)
-            ],  # mypy type fix
-            help="Application task",
-        )
-        app_group.add_argument(
-            "--target", "-b", type=str, help="Target binary or directory"
-        )
-        app_group.add_argument(
-            "--save", "-s", action="store_true", help="Save results to database"
-        )
-        app_group.add_argument(
-            "--threshold", "-r", type=float, default=0.5, help="Signature match threshold"
-        )
-        app_group.add_argument(
-            "--progress", "-p", action="store_true", help="Show progress bar"
-        )
-        demo_group = parser.add_argument_group("Demo operations")
-        demo_group.add_argument(
-            "--fast-match", type=str, nargs="+", metavar="BINARY_PATH", help="Fast match a binary against the database"
-        )
-        demo_group.add_argument(
-            "--robust-match", type=str, nargs="+", metavar="BINARY_PATH",
-            help="Match a given binary against database"
-        )
-        demo_group.add_argument(
-            "--matches", type=int, metavar="N", help="Number of matches to return"
-        )
+        parser = get_parser()
         args = parser.parse_args()
+
         if not ((args.status or args.drop) or (args.task and args.target) or (args.fast_match or args.robust_match)):
             parser.error("--status or --task and --target are required options")
 
@@ -278,10 +284,16 @@ def main(args: Optional[argparse.Namespace] = None):
             logger.info(f"Fast matching target {target.path.absolute().relative_to(Path(__file__).parent / 'binary_data')}")
             matches = hash_repo.binary_repo.fast_match(target, args.threshold)
             matches = list(filter(lambda x: x.path != str(target.path), matches))
-            logger.info(f"Found {len(matches)} matches above {args.threshold} similarity")
-            for match in matches:
-                print(f"\t{match.path}: {target ^ match.sig}")
-            print()
+            _log = f"Found {len(matches)} matches above {args.threshold} similarity"
+            if len(matches) == 0:
+                logger.info(_log + ".\n")
+                continue
+            logger.info(_log + ":\n" + "\n".join([f"\t{match.path}: {target ^ match.sig}" for match in matches]) + "\n")
+            # matches = "\n".join([f"\t{match.path}: {target ^ match.sig}" for match in matches]) + "\n"
+            # logger.info(f"Found {len(matches)} matches above {args.threshold} similarity" + ("\n" if len(matches) == 0 else ""))
+            # for match in matches:
+            #     newline = "\n" if matches.index(match) == len(matches) - 1 else ""
+            #     logger.info(f"\t{match.path}: {target ^ match.sig}{newline}")
         return
 
     if args.robust_match:
