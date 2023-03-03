@@ -1,5 +1,7 @@
 ## Hashashin: A Fuzzy Matching Library for Binary Ninja
 
+_Note: We have added major changes to the [develop](https://github.com/riverloopsec/hashashin/tree/develop) branch yet to be merged. For the latest updates please use that branch._
+
 ### Setup
 #### Prerequisites
 A valid binary ninja license is required to use this library - please ensure Binary Ninja is installed and that the Python
