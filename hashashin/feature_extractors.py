@@ -10,13 +10,17 @@ from binaryninja import BinaryView  # type: ignore
 from binaryninja import Function as BinaryNinjaFunction
 from binaryninja import enums  # type: ignore
 
-from hashashin.utils import logger
+import logging
 
-logger = logger.getChild(os.path.basename(__file__))
+logger = logging.getLogger(__name__)
 
 NUM_INSTR_CATEGORIES = len(enums.MediumLevelILOperation.__members__)
 VERTICES = 3
 EDGES = 4
+
+
+class BinjaTimeoutException(Exception):
+    pass
 
 
 def compute_cyclomatic_complexity(fn: BinaryNinjaFunction) -> int:
@@ -99,7 +103,7 @@ def compute_constants(fn: BinaryNinjaFunction) -> set[int]:
     return set(consts)
 
 
-def compute_instruction_histogram(
+def _compute_instruction_histogram(
     fn: BinaryNinjaFunction, timeout: int = 15
 ) -> list[int]:
     """
@@ -110,24 +114,40 @@ def compute_instruction_histogram(
     """
     vector: list[int] = [0] * len(enums.MediumLevelILOperation.__members__)
     if not fn.mlil:
-        fn.analysis_skipped = False
+        logger.debug(f"MLIL not available for function {fn.name}, rerunning analysis...")
         start = time.time()
-        fn.view.update_analysis()
+        fn.analysis_skipped = False
+        fn.reanalyze()
         while (
+            time.time() - start < timeout and
             fn.view.analysis_progress.state != enums.AnalysisState.IdleState
-            and fn.mlil is None
-            and time.time() - start < timeout
         ):
+            if logger.getEffectiveLevel() <= logging.DEBUG:
+                print(f"Waiting for analysis to complete... {time.time() - start:.1f}/{timeout}s", end="\r")
             time.sleep(0.1)
-        if not fn.mlil:
-            breakpoint()
-            raise ValueError(
-                f"MLIL not available for function or analysis exceeded {timeout}s timeout."
+        if logger.getEffectiveLevel() <= logging.DEBUG:
+            print()
+        if fn.view.analysis_progress.state != enums.AnalysisState.IdleState:
+            logger.debug(f"Binaryview not idle: {fn.view.analysis_progress}")
+            logger.debug(f"fn.mlil: {fn.mlil_if_available}")
+        if not fn.mlil_if_available:
+            raise BinjaTimeoutException(
+                f"MLIL not available for {fn.name} or analysis exceeded {timeout}s timeout."
             )
     for instr in fn.mlil.instructions:
         # https://youtrack.jetbrains.com/issue/PY-55734/IntEnum.value-is-not-recognized-as-a-property
         vector[instr.operation.value] += 1  # type: ignore
     return vector
+
+
+def compute_instruction_histogram(
+        fn: BinaryNinjaFunction, timeout: int = 15
+) -> list[int]:
+    try:
+        return _compute_instruction_histogram(fn, timeout)
+    except BinjaTimeoutException as e:
+        logger.warning(e)
+        return [0] * len(enums.MediumLevelILOperation.__members__)
 
 
 def walk(block, seen=None):

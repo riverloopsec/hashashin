@@ -17,9 +17,9 @@ from hashashin.classes import BinarySignature
 from hashashin.classes import FunctionFeatModel
 from hashashin.classes import FunctionFeatures
 from hashashin.classes import ORM_BASE
-from hashashin.utils import logger
+import logging
 
-logger = logger.getChild(Path(__file__).name)
+logger = logging.getLogger(__name__)
 SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
 
 
@@ -248,9 +248,12 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
 
     def get(self, path: Path) -> Optional[BinarySignature]:
         with self.session() as session:
+            logger.debug(f"xxhashing {path}")
             binhash = BinarySignature.hash_file(path)
+            logger.debug("Querying database for cached binary")
             cached = session.query(BinarySigModel).filter_by(hash=binhash)
             if cached.count() > 1:
+                logger.debug("Found cached binary.")
                 if cached.filter_by(path=str(path)).count() == 1:
                     cached = cached.filter_by(path=str(path))
                 elif cached.filter_by(path=str(path)).count() > 1:

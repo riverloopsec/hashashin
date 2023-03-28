@@ -7,6 +7,8 @@ from typing import Iterable
 from typing import Optional
 from typing import Set
 from typing import Dict
+from typing import Union
+from typing import Callable
 
 import numpy as np
 import numpy.typing as npt
@@ -35,12 +37,14 @@ from hashashin.feature_extractors import compute_edge_taxonomy_histogram
 from hashashin.feature_extractors import compute_instruction_histogram
 from hashashin.feature_extractors import compute_vertex_taxonomy_histogram
 from hashashin.feature_extractors import get_fn_strings
-from hashashin.utils import logger
+from hashashin.feature_extractors import BinjaTimeoutException
 from hashashin.utils import merge_uint32_to_int
 from hashashin.utils import split_int_to_uint32
+import logging
 
-logger = logger.getChild(Path(__file__).name)
+logger = logging.getLogger(__name__)
 ORM_BASE: Any = declarative_base()
+TLD = Path(__file__).parent.parent
 
 
 class BinarySigModel(ORM_BASE):
@@ -55,6 +59,7 @@ class BinarySigModel(ORM_BASE):
 
     @classmethod
     def fromBinarySignature(cls, sig: "BinarySignature") -> "BinarySigModel":
+        breakpoint()
         with open(sig.path, "rb") as f:
             return cls(
                 hash=sig.binary_hash,
@@ -143,16 +148,13 @@ class AbstractFunction(ABC):
 @dataclass
 class BinjaFunction(AbstractFunction):
     # TODO: change from dataclass to regular class?
-    name: str
-    _function: Optional[BinaryNinjaFunction]
-    path: Optional[Path] = None
-
     @staticmethod
     def binja2str(function: BinaryNinjaFunction) -> str:
         return f"{function} @ 0x{function.start:X}"
 
     @staticmethod
     def str2addr(name: str) -> int:
+        # TODO: handle function name without address
         return int(name.split("@")[1].strip(), 16)
 
     @classmethod
@@ -176,6 +178,9 @@ class FeatureExtractor:
     def extract_from_file(
             self, path: Path, progress_kwargs: Optional[dict] = None
     ) -> "BinarySignature":
+        raise NotImplementedError
+
+    def extract_function(self, path_or_bv: Union[Path, BinaryView], function: Union[str, int]) -> "FunctionFeatures":
         raise NotImplementedError
 
     def __repr__(self):
@@ -228,24 +233,56 @@ class BinjaFeatureExtractor(FeatureExtractor):
             func = function.function
         return self._extract(func)
 
-    def extract_from_bv(self, bv: BinaryView, progress_kwargs=None) -> "BinarySignature":
+    def _extract_functions(self, bv: BinaryView, progress_kwargs: Dict) -> Iterable["FunctionFeatures"]:
+        disable = progress_kwargs.pop("disable", False)
+        pbar = tqdm(bv.functions, disable=disable)  # type: ignore
+        for func in pbar:
+            if "desc" in progress_kwargs and callable(progress_kwargs["desc"]):
+                pbar.set_description(progress_kwargs["desc"](func))  # type: ignore
+            elif "desc" in progress_kwargs:
+                pbar.set_description(progress_kwargs["desc"])  # type: ignore
+            else:
+                pbar.set_description(f"Extracting features from {func}")  # type: ignore
+            yield self._extract(func)
+
+    def extract_from_bv(self, bv: BinaryView, progress_kwargs: Optional[Dict] = None) -> "BinarySignature":
         """
         Extracts features from all functions in a binary.
         :param bv: binary view
-        :param progress_kwargs: optionally pass tqdm kwargs to show progress
+        :param progress_kwargs: optionally pass tqdm kwargs to show progress.
+                If progress_kwargs["desc"] is callable, it will be called with the current function
         :return: list of features
         """
         progress_kwargs = (
             {"disable": "True"} if progress_kwargs is None else progress_kwargs
         )
+        if Path(bv.file.filename).suffix == ".bndb":
+            path = Path(bv.file.filename).with_suffix("")
+        else:
+            path = Path(bv.file.filename)
         return BinarySignature(
-            path=Path(bv.file.filename),
-            functionFeatureList=[
-                self.extract(BinjaFunction.fromFunctionRef(func))
-                for func in tqdm(bv.functions, **progress_kwargs)
-            ],
+            path=path,
+            functionFeatureList=list(self._extract_functions(bv, progress_kwargs)),
             extraction_engine=self,
         )
+
+    @staticmethod
+    def progress(cur, total):
+        if cur < total:
+            print(f"{cur}/{total}", end="\r")
+        else:
+            print(f"{cur}/{total}")
+        return True
+
+    @staticmethod
+    def open_view(path: Path, **kwargs) -> BinaryView:
+        if path.with_suffix(path.suffix + ".bndb").exists():
+            bv_path = path.with_suffix(path.suffix + ".bndb")
+            logger.debug(f"Found bv for {path}: {bv_path.absolute()}")
+        else:
+            bv_path = path
+        logger.debug(f"Opening {bv_path.absolute()} with Binary Ninja")
+        return open_view(bv_path, **kwargs)
 
     def extract_from_file(self, path: Path, progress_kwargs=None) -> "BinarySignature":
         """
@@ -259,11 +296,42 @@ class BinjaFeatureExtractor(FeatureExtractor):
         progress_kwargs = (
             {"disable": "True"} if progress_kwargs is None else progress_kwargs
         )
-        with open_view(path) as bv:
+        with self.open_view(
+                path,
+                # progress_func=self.progress,
+        ) as bv:
             bs = self.extract_from_bv(bv, progress_kwargs)
             if not bs.functionFeatureList:
                 raise self.NotABinaryError(f"No functions found in {path}")
             return bs
+
+    def extract_function(self, path_or_bv: Union[Path, BinaryView], function: Union[str, int]) -> "FunctionFeatures":
+        """
+        Extracts features from a single function in a binary.
+        :param path_or_bv: path to binary or loaded bv
+        :param function: name of function or address to function start
+        :return: FunctionFeatures
+        """
+        if isinstance(path_or_bv, Path):
+            with self.open_view(path_or_bv) as _bv:
+                return self.extract_function(_bv, function)
+        elif not isinstance(path_or_bv, BinaryView):
+            raise ValueError(f"Expected path or BinaryView, got {type(path_or_bv)}")
+        bv: BinaryView = path_or_bv
+        if isinstance(function, str):
+            if function.upper().startswith("0X"):
+                func = bv.get_function_at(int(function, 16))
+            else:
+                fns = bv.get_functions_by_name(function)
+                if len(fns) != 1:
+                    raise ValueError(f"Found {len(fns)} functions for {function}")
+                func = fns[0]
+        else:
+            func = bv.get_function_at(function)
+        if func is None:
+            raise ValueError(f"Could not find function {function} in {path_or_bv}")
+        logger.debug(f"Extracting features from {func} in {bv.file.filename}...")
+        return self._extract(func)
 
     def get_abstract_function(self, path: Path, name: str) -> AbstractFunction:
         return BinjaFunction.fromFile(path, name)
@@ -330,7 +398,9 @@ class FunctionFeatures:
 
         @staticmethod
         def fromArray(array: np.ndarray) -> Iterable[str]:
-            logger.debug("There is a bug here, strings are not displayed properly")
+            if 'strings_warning' not in dir(logger):
+                logger.debug("There is a bug here, strings are not displayed properly")
+                logger.strings_warning = True  # type: ignore
             if len(array) != FunctionFeatures.Strings.length:
                 raise ValueError(
                     f"Expected array of length {FunctionFeatures.Strings.length}, got {len(array)}"
@@ -344,10 +414,10 @@ class FunctionFeatures:
             if len(self) == 0:
                 return [0] * self.length
             if "warned" not in dir(logger):
-                logger.debug(
+                logger.warning(
                     "Wasting space here, can shorten array by 256 bytes by using uint32"
                 )
-                logger.warned = True
+                logger.warned = True  # type: ignore
             strings = "\0".join(sorted(self[: len(self)])).encode("utf-8")
             strings = strings[: min(len(strings), self.length)]
             return np.pad(
@@ -588,7 +658,12 @@ class BinarySignature:
                 self.path = Path(*self.path.parts[i:])
                 break
         if not self.path.exists():
-            raise FileNotFoundError(f"File {self.path} does not exist.")
+            globsearch = list(TLD.glob(f"**/{self.path}"))
+            logger.debug(f"Can't find path {self.path}, globbed:\n{globsearch}")
+            if len(globsearch) == 1 and globsearch[0].exists():
+                self.path = globsearch[0]
+            else:
+                raise FileNotFoundError(f"File {self.path} does not exist.")
         if not self.extraction_engine:
             self.extraction_engine = self.functionFeatureList[0].extraction_engine
         if any(

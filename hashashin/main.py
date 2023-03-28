@@ -15,14 +15,15 @@ from tqdm import tqdm
 from hashashin.classes import BinarySignature
 from hashashin.classes import BinjaFeatureExtractor
 from hashashin.classes import FeatureExtractor
+from hashashin.classes import FunctionFeatures
 from hashashin.db import HashRepository
 from hashashin.db import SQLAlchemyBinarySignatureRepository
 from hashashin.db import SQLAlchemyFunctionFeatureRepository
 from hashashin.metrics import stacked_norms
 from hashashin.utils import get_binaries
-from hashashin.utils import logger
+import logging
 
-logger = logger.getChild(Path(__file__).name)
+logger = logging.getLogger(__name__)
 
 
 class Task(Enum):
@@ -35,6 +36,7 @@ class HashashinApplicationContext:
     extractor: FeatureExtractor
     hash_repo: HashRepository
     target_path: Optional[Union[Path, Iterable[Path]]]
+    target_func: Optional[str]
     save_to_db: Optional[bool]
     sig_match_threshold: float = 0.5
     # feat_match_threshold: int = 0
@@ -114,7 +116,7 @@ class BinaryHasherApplication(HashashinApplication):
             self.context.hash_repo.save(sig)
         return sig
 
-    def step(self) -> Iterable[BinarySignature]:
+    def step(self) -> Iterable[Union[BinarySignature, FunctionFeatures]]:
         if self.context.target_path is None:
             raise ValueError("No target binary specified")
         target_path: Union[Path, list[Path]] = (
@@ -133,33 +135,40 @@ class BinaryHasherApplication(HashashinApplication):
         targets = get_binaries(
             target_path, progress=self.context.progress, recursive=True
         )
-        logger.info(f"Hashing {len(targets)} binaries")
-        pbar = tqdm(targets, disable=not self.context.progress)
+        if len(targets) == 1 and self.context.target_func is not None:
+            logger.info(f"Extracting {self.context.target_func} from {targets[0]}")
+            bs = self.context.extractor.extract_function(targets[0], self.context.target_func)
+            yield bs
+            return
+        logger.info(f"Loading {len(targets)} binaries...")
+        pbar = tqdm(targets, disable=not self.context.progress)  # type: ignore
         for t in pbar:
-            pbar.set_description(f"Hashing {t}")
+            pbar.set_description(f"Hashing {t}")  # type: ignore
             cached = self.context.hash_repo.get(t)
             if cached is not None:
-                pbar.set_description(f"Retrieved {t} from db")
+                pbar.set_description(f"Retrieved {t} from db")  # type: ignore
                 logger.debug(f"Binary {t} already hashed, skipping")
                 yield cached
                 continue
+            else:
+                logger.debug(f"{t} not found in cache")
             try:
                 target_signature = self.context.extractor.extract_from_file(
                     t,
                     progress_kwargs={
-                        "desc": f"Extracting {t}",
+                        "desc": lambda func: f"Extracting fn {func.name} @ {func.start:#x}",
                         "position": 1,
                         "leave": False,
                     },
                 )
-            except BinjaFeatureExtractor.NotABinaryError:
-                logger.info(f"Skipping non-binary {t}")
+            except BinjaFeatureExtractor.NotABinaryError as e:
+                logger.warning(f"Skipping non-binary {t}:\n{e}")
                 continue
             if self.context.save_to_db:
                 self.context.hash_repo.save(target_signature)
             yield target_signature
 
-    def run(self) -> List[BinarySignature]:
+    def run(self) -> List[Union[BinarySignature, FunctionFeatures]]:
         logger.info(f"Hashing {self.context.target_path}")
         return list(self.step())
 
@@ -222,6 +231,9 @@ def get_parser():
         "--target", "-b", type=str, help="Target binary or directory"
     )
     app_group.add_argument(
+        "--function", "-f", type=str, help="Target function name or address"
+    )
+    app_group.add_argument(
         "--save", "-s", action="store_true", help="Save results to database"
     )
     app_group.add_argument(
@@ -241,6 +253,9 @@ def get_parser():
     demo_group.add_argument(
         "--matches", type=int, metavar="N", help="Number of matches to return"
     )
+    parser.add_argument(
+        "--debug", "-d", action="store_true", help="Enable debug logging"
+    )
     return parser
 
 
@@ -251,6 +266,13 @@ def main(args: Optional[argparse.Namespace] = None):
 
         if not ((args.status or args.drop) or (args.task and args.target) or (args.fast_match or args.robust_match)):
             parser.error("--status or --task and --target are required options")
+
+    level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(
+        format='%(asctime)s,%(msecs)03d %(levelname)-6s [%(filename)s:%(lineno)d] %(message)s',
+        datefmt='%Y-%m-%d:%H:%M:%S',
+        level=level,
+    )
 
     if args.status:
         print("Database status:")
@@ -331,6 +353,7 @@ def main(args: Optional[argparse.Namespace] = None):
                 extractor=BinjaFeatureExtractor(),
                 hash_repo=HashRepository(),
                 target_path=Path(args.target),
+                target_func=args.function,
                 save_to_db=args.save,
                 sig_match_threshold=args.threshold,
                 progress=args.progress,
@@ -339,7 +362,7 @@ def main(args: Optional[argparse.Namespace] = None):
         )
     )
     app = factory.create()
-    print(app.run())
+    logger.info(app.run())
     print("Done!")
 
 

@@ -13,6 +13,7 @@ def get_features(view, func):
 
 def get_signature(view):
     bs = BinjaFeatureExtractor().extract_from_bv(view)
+    view.session_data["BinarySignature"] = bs
     print(f"Signature for {view.file.filename}:\n{bs.signature}")
 
 

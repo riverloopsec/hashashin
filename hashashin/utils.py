@@ -12,8 +12,7 @@ import numpy as np
 import numpy.typing as npt
 from tqdm import tqdm  # type: ignore
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("hashashin")
+logger = logging.getLogger(__name__)
 
 
 def get_binaries(
