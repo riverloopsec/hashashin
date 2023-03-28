@@ -19,3 +19,6 @@ If you would like to run the provided tests or notebook, run `pip install .[dev]
 
 ### Demo Usage
 ![](demo.gif)
+
+### libcurl similarity matrix
+![](libcurl_similarity_matrix.png)
