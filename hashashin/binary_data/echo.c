@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 void wrapper_printf(const char *data) {
 	    printf("%s", data);

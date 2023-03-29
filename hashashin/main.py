@@ -253,6 +253,9 @@ def get_parser():
     demo_group.add_argument(
         "--matches", type=int, metavar="N", help="Number of matches to return"
     )
+    demo_group.add_argument(
+        "--stdlib", action="store_true", help="Standard library matching"
+    )
     parser.add_argument(
         "--debug", "-d", action="store_true", help="Enable debug logging"
     )
@@ -362,7 +365,49 @@ def main(args: Optional[argparse.Namespace] = None):
         )
     )
     app = factory.create()
-    logger.info(app.run())
+    ret = app.run()
+
+    if args.stdlib:
+        logger.info("Computing stdlib signatures...")
+        # Get stdlib binary
+        stdlib_path = "binary_data/libc.so.6"
+        stdlib_matrix, stdlib_features = app.context.hash_repo.function_repo.get_feature_matrix(stdlib_path)
+        if isinstance(ret[0], FunctionFeatures):
+            # Single function
+            stdlib_score = np.linalg.norm(stdlib_matrix - ret[0].asArray(), axis=1)
+            # get top 5 stdlib_features
+            top5 = sorted(zip(stdlib_score, stdlib_features), key=lambda x: x[0], reverse=False)[:5]
+            print(f"Top 5 stdlib functions for {ret[0].function.name}:")
+            spaces = max([len(str(x[1])) for x in top5])
+            format = f"{{path:{{spaces}}}}: {{score}}"
+            print("\t" + "\n\t".join([format.format(path=x[1].name, score=x[0], spaces=spaces) for x in top5]) + "\n")
+            breakpoint()
+        elif isinstance(ret[0], BinarySignature):
+            for bin in ret:
+                # best_matches = []
+                logger.debug(f"Matching {bin.path} to stdlib...")
+                hits = 0
+                for func in bin.functionFeatureList:
+                    if func.cyclomatic_complexity <= 2:
+                        continue
+                    stdlib_score = np.linalg.norm(stdlib_matrix - func.asArray(), axis=1)
+                    if min(stdlib_score) == 0:
+                        hits += 1
+                        logger.info(f"{bin.path}:\t{func.function.name}")
+                        logger.info(f"{Path(stdlib_path).name}:\t{stdlib_features[np.argmin(stdlib_score)].name}\n")
+                logger.info(f"Found {hits} perfect matches for {bin.path} out of {len(bin.functionFeatureList)} functions")
+
+                # z_scores = (np.array(best_matches) - np.mean(best_matches)) / np.std(best_matches)
+                # target_z_score = -0.9
+                # match_idx = np.where(z_scores < -0.9)[0]
+                # match_idx = np.where(np.array(best_matches) == 0)[0]
+                # logger.info(f"Found {len(match_idx)} matches for {bin.path}")
+                # for i in match_idx:
+                #     logger.debug(f"{bin.path}:\t{bin.functionFeatureList[i].function.name}")
+                #     logger.debug(f"{Path(stdlib_path).name}:\t{stdlib_features[i].name}\n")
+                #     # logger.debug(f"Dist:\t\t{best_matches[i]}\n")
+                #     breakpoint()
+
     print("Done!")
 
 

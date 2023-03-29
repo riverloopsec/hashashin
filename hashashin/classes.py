@@ -41,6 +41,7 @@ from hashashin.feature_extractors import BinjaTimeoutException
 from hashashin.utils import merge_uint32_to_int
 from hashashin.utils import split_int_to_uint32
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 ORM_BASE: Any = declarative_base()
@@ -59,11 +60,14 @@ class BinarySigModel(ORM_BASE):
 
     @classmethod
     def fromBinarySignature(cls, sig: "BinarySignature") -> "BinarySigModel":
-        breakpoint()
+        try:
+            path = str(sig.path.absolute().relative_to(Path(__file__).parent))
+        except ValueError:
+            path = str(sig.path)
         with open(sig.path, "rb") as f:
             return cls(
                 hash=sig.binary_hash,
-                path=str(sig.path),
+                path=path,
                 sig=sig.signature,
                 extraction_engine=str(sig.extraction_engine),
             )
@@ -278,11 +282,31 @@ class BinjaFeatureExtractor(FeatureExtractor):
     def open_view(path: Path, **kwargs) -> BinaryView:
         if path.with_suffix(path.suffix + ".bndb").exists():
             bv_path = path.with_suffix(path.suffix + ".bndb")
-            logger.debug(f"Found bv for {path}: {bv_path.absolute()}")
+            logger.debug(f"Found bndb for {path}: {bv_path.absolute()}")
         else:
             bv_path = path
         logger.debug(f"Opening {bv_path.absolute()} with Binary Ninja")
-        return open_view(bv_path, **kwargs)
+        update_analysis = kwargs.pop("update_analysis", False)
+        bv = open_view(bv_path, update_analysis=update_analysis, **kwargs)
+        if not update_analysis:
+            timeout = kwargs.pop("timeout", 300)
+            bv.update_analysis()
+            start = time.time()
+            while (
+                    time.time() - start < timeout and
+                    bv.analysis_progress.state != enums.AnalysisState.IdleState
+            ):
+                if logger.getEffectiveLevel() <= logging.DEBUG:
+                    print(f"{(str(bv.analysis_progress) + '...').ljust(40)}\t{time.time() - start:.1f}/{timeout}s", end="\r")
+                time.sleep(0.1)
+            if logger.getEffectiveLevel() <= logging.DEBUG:
+                print()
+            if bv.analysis_progress.state != enums.AnalysisState.IdleState:
+                raise TimeoutError(f"Analysis timed out after {timeout}s")
+            if time.time() - start > 30:
+                logger.debug(f"Analysis took {time.time() - start:.1f}s, caching bndb")
+                bv.create_database(f"{bv.file.filename}.bndb")
+        return bv
 
     def extract_from_file(self, path: Path, progress_kwargs=None) -> "BinarySignature":
         """
@@ -373,7 +397,8 @@ class FunctionFeatures:
 
         def asArray(self):
             x = split_int_to_uint32(self, pad=self.length, wrap=True)
-            if int(np.ceil(len(bin(self)) / 32)) > self.length:
+            # if int(np.ceil(len(bin(self)) / 32)) > self.length:
+            if self > 2 ** (self.length * 32):
                 logger.debug(
                     f"Dominator signature too long, truncating {hex(self)} -> {hex(merge_uint32_to_int(x))}"
                 )

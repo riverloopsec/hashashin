@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
-# import seaborn as sns  # type: ignore
+import seaborn as sns  # type: ignore
 from sklearn.preprocessing import normalize
 from tqdm import tqdm
 from typing import Tuple, List
@@ -14,15 +14,17 @@ logger.setLevel(logging.INFO)
 logger = logger.getChild(Path(__file__).name)
 
 
-# def show_similarity_matrix(mat, labels, title=None, font_scale=0.7, figsize=(14, 14)):
-#     if isinstance(mat, list):
-#         mat = np.array(mat)
-#     if isinstance(labels, list):
-#         labels = np.array(labels)
-#     sns.set(font_scale=font_scale, rc={"figure.figsize": figsize, "axes.titlesize": 20})
-#     sns.heatmap(
-#         mat, xticklabels=labels, yticklabels=labels, cmap="Blues", annot=True
-#     ).set(title=title)
+def show_similarity_matrix(mat, labels, title=None, font_scale=0.7, figsize=None):
+    if figsize is None:
+        figsize = (14, 14)
+    if isinstance(mat, list):
+        mat = np.array(mat)
+    if isinstance(labels, list):
+        labels = np.array(labels)
+    sns.set(font_scale=font_scale, rc={"figure.figsize": figsize, "axes.titlesize": 20})
+    sns.heatmap(
+        mat, xticklabels=labels, yticklabels=labels, cmap="Blues", annot=True
+    ).set(title=title)
 
 
 def hash_paths(
@@ -122,11 +124,12 @@ def stacked_norms(fc1: List[np.ndarray], fc2: np.ndarray) -> List[float]:
     # return norms
 
 
-def generate_matrix_norms(base_path, hashApp, paths):
-    signatures = hash_paths(base_path, hashApp, paths)
-    binaries = sorted(
-        list([s.path.relative_to(Path(".").parent / "binary_data") for s in signatures])
+def generate_matrix_norms(base_path, hashApp, paths, rescale=None):
+    signatures = sorted(
+        hash_paths(base_path, hashApp, paths),
+        key=lambda s: s.path.relative_to(Path(".").parent / "binary_data"),
     )
+    binaries = list([s.path.relative_to(Path(".").parent / "binary_data") for s in signatures])
     logger.info("Converting signatures to function matrices..")
     np_signatures = [b.function_matrix for b in signatures]
     norms = np.zeros((len(binaries), len(binaries)))
@@ -141,13 +144,17 @@ def generate_matrix_norms(base_path, hashApp, paths):
         norms[i, j] = matrix_norms(np_signatures[i], np_signatures[j])
     p, r, f1 = compute_metrics(norms)
     logger.info(f"Precision: {p}, Recall: {r}, F1: {f1}")
+    if rescale is not None:
+        _norms = rescale(norms)
+    else:
+        _norms = norms
     show_similarity_matrix(
-        norms,
+        _norms,
         binaries,
         f"{base_path} matrix norms",
         figsize=(20, 20) if len(binaries) > 10 else None,
     )
-    return norms
+    return norms, binaries
 
 
 def main():

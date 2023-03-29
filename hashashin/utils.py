@@ -63,7 +63,6 @@ def get_binaries(
 
 def split_int_to_uint32(x: int, pad=None, wrap=False) -> npt.NDArray[np.uint32]:
     """Split very large integers into array of uint32 values. Lowest bits are first."""
-    global logger
     _logger = logger.getChild("utils.split_int_to_uint32")
     if x < np.iinfo(np.uint32).max:
         if pad is None:
