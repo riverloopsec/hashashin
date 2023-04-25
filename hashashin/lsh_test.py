@@ -27,23 +27,23 @@ def const_to_numpy(constants):
     return np.array(sorted([c.value for c in constants]), dtype=np.int32)
 
 
-def compute_metrics(similarity_matrix):
-    # Compute metrics
-    tp = np.trace(similarity_matrix > 0.9) / len(similarity_matrix)
-    fn = np.trace(similarity_matrix <= 0.9) / len(similarity_matrix)
-    tn = (np.sum(similarity_matrix < 0.5) - np.trace(similarity_matrix < 0.5)) / (
-        len(similarity_matrix) ** 2 - len(similarity_matrix)
-    )
-    fp = (np.sum(similarity_matrix >= 0.5) - np.trace(similarity_matrix >= 0.5)) / (
-        len(similarity_matrix) ** 2 - len(similarity_matrix)
-    )
-    # Compute the precision
-    precision = tp / (tp + fp)
-    # Compute the recall
-    recall = tp / (tp + fn)
-    # Compute the F1 score
-    f1 = 2 * (precision * recall) / (precision + recall)
-    return precision, recall, f1
+# def compute_metrics(similarity_matrix):
+#     # Compute metrics
+#     tp = np.trace(similarity_matrix > 0.9) / len(similarity_matrix)
+#     fn = np.trace(similarity_matrix <= 0.9) / len(similarity_matrix)
+#     tn = (np.sum(similarity_matrix < 0.5) - np.trace(similarity_matrix < 0.5)) / (
+#         len(similarity_matrix) ** 2 - len(similarity_matrix)
+#     )
+#     fp = (np.sum(similarity_matrix >= 0.5) - np.trace(similarity_matrix >= 0.5)) / (
+#         len(similarity_matrix) ** 2 - len(similarity_matrix)
+#     )
+#     # Compute the precision
+#     precision = tp / (tp + fp)
+#     # Compute the recall
+#     recall = tp / (tp + fn)
+#     # Compute the F1 score
+#     f1 = 2 * (precision * recall) / (precision + recall)
+#     return precision, recall, f1
 
 
 def fmask(mask: slice, content: str):
@@ -60,54 +60,54 @@ def fmask(mask: slice, content: str):
         return "".join(_content)
 
 
-def compute_matrices(
-    base_binary,
-    generate=True,
-    regenerate=False,
-    version_paths=None,
-    hash_progress=False,
-    _feature_mask=None,
-):
-    if version_paths is None:
-        version_paths = glob.glob(f"{BINARY_DIR}/{base_binary}/*[0-9].[0-9]*")
-    elif isinstance(version_paths, str):
-        print(f"Globbing {BINARY_DIR}/{base_binary}/{version_paths}")
-        version_paths = glob.glob(f"{BINARY_DIR}/{base_binary}/{version_paths}")
-    else:
-        assert isinstance(
-            version_paths, list
-        ), "version_paths must be a string regex or a list of paths"
-    binaries = set()
-    for v in version_paths:
-        bins = get_binaries(v)
-        print(
-            f"Hashing {len(bins)} binaries in {v}: {[b.replace(v, '') for b in bins]}"
-        )
-        for b in tqdm(bins, disable=hash_progress):
-            load_hash(
-                b, progress=hash_progress, generate=generate, regenerate=regenerate
-            )
-            binaries.add(b.replace(v, ""))
-    binaries = sorted(list(binaries))
-    minhash_similarities = np.zeros((len(binaries), len(binaries)))
-    jaccard_similarities = np.zeros((len(binaries), len(binaries)))
-
-    print(f"Computing similarity matrix for {base_binary}:")
-    print(",".join(binaries))
-    print()
-    for i, j in tqdm(
-        np.ndindex(len(binaries), len(binaries)), total=len(binaries) ** 2
-    ):
-        a = f"{version_paths[0]}/{binaries[i]}"
-        b = f"{version_paths[1]}/{binaries[j]}"
-        sig_a, feat_a = load_hash(a, generate=False, progress=False)
-        sig_b, feat_b = load_hash(b, generate=False, progress=False)
-        if _feature_mask is not None:
-            feat_a = {k: fmask(_feature_mask, v) for k, v in feat_a.items()}
-            feat_b = {k: fmask(_feature_mask, v) for k, v in feat_b.items()}
-        minhash_similarities[i, j] = minhash_similarity(sig_a, sig_b)
-        jaccard_similarities[i, j] = jaccard_similarity(feat_a, feat_b)
-    return minhash_similarities, jaccard_similarities, binaries
+# def compute_matrices(
+#     base_binary,
+#     generate=True,
+#     regenerate=False,
+#     version_paths=None,
+#     hash_progress=False,
+#     _feature_mask=None,
+# ):
+#     if version_paths is None:
+#         version_paths = glob.glob(f"{BINARY_DIR}/{base_binary}/*[0-9].[0-9]*")
+#     elif isinstance(version_paths, str):
+#         print(f"Globbing {BINARY_DIR}/{base_binary}/{version_paths}")
+#         version_paths = glob.glob(f"{BINARY_DIR}/{base_binary}/{version_paths}")
+#     else:
+#         assert isinstance(
+#             version_paths, list
+#         ), "version_paths must be a string regex or a list of paths"
+#     binaries = set()
+#     for v in version_paths:
+#         bins = get_binaries(v)
+#         print(
+#             f"Hashing {len(bins)} binaries in {v}: {[b.replace(v, '') for b in bins]}"
+#         )
+#         for b in tqdm(bins, disable=hash_progress):
+#             load_hash(
+#                 b, progress=hash_progress, generate=generate, regenerate=regenerate
+#             )
+#             binaries.add(b.replace(v, ""))
+#     binaries = sorted(list(binaries))
+#     minhash_similarities = np.zeros((len(binaries), len(binaries)))
+#     jaccard_similarities = np.zeros((len(binaries), len(binaries)))
+#
+#     print(f"Computing similarity matrix for {base_binary}:")
+#     print(",".join(binaries))
+#     print()
+#     for i, j in tqdm(
+#         np.ndindex(len(binaries), len(binaries)), total=len(binaries) ** 2
+#     ):
+#         a = f"{version_paths[0]}/{binaries[i]}"
+#         b = f"{version_paths[1]}/{binaries[j]}"
+#         sig_a, feat_a = load_hash(a, generate=False, progress=False)
+#         sig_b, feat_b = load_hash(b, generate=False, progress=False)
+#         if _feature_mask is not None:
+#             feat_a = {k: fmask(_feature_mask, v) for k, v in feat_a.items()}
+#             feat_b = {k: fmask(_feature_mask, v) for k, v in feat_b.items()}
+#         minhash_similarities[i, j] = minhash_similarity(sig_a, sig_b)
+#         jaccard_similarities[i, j] = jaccard_similarity(feat_a, feat_b)
+#     return minhash_similarities, jaccard_similarities, binaries
 
 
 def compute_single_bin_matrices(

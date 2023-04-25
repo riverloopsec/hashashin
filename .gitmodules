@@ -1,3 +1,6 @@
 [submodule "flowslicer"]
 	path = flowslicer
 	url = git@github.com:praxiseng/flowslicer.git
+[submodule "hashashin/net-snmp"]
+	path = hashashin/net-snmp
+	url = git@github.com:net-snmp/net-snmp.git

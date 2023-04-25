@@ -682,7 +682,7 @@ class BinarySignature:
             if Path(*self.path.parts[i:]).exists():
                 self.path = Path(*self.path.parts[i:])
                 break
-        if not self.path.exists():
+        if not self.path.exists() and not self.path.with_suffix(".bndb").exists():
             globsearch = list(TLD.glob(f"**/{self.path}"))
             logger.debug(f"Can't find path {self.path}, globbed:\n{globsearch}")
             if len(globsearch) == 1 and globsearch[0].exists():
@@ -762,6 +762,17 @@ class BinarySignature:
     @property
     def binary_hash(self) -> bytes:
         return self.hash_file(self.path)
+
+    def get_function_features(self, func_name: Optional[str], func_addr: Optional[int]) -> Optional[FunctionFeatures]:
+        if func_name:
+            for f in self.functionFeatureList:
+                if func_name in f.function.name:
+                    return f
+        elif func_addr:
+            for f in self.functionFeatureList:
+                if f.function.function.start == func_addr:
+                    return f
+        return None
 
     @staticmethod
     def minhash_similarity(

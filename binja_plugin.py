@@ -5,15 +5,19 @@ from hashashin.classes import BinjaFeatureExtractor
 import pprint as pp
 
 
+def apply_comment(func, function_features):
+    func.comment = pp.pformat(function_features.get_feature_dict(), sort_dicts=False)
+
+
 def get_features(view, func):
-    ff = BinjaFeatureExtractor().extract(func)
-    func.comment = pp.pformat(ff.get_feature_dict(), sort_dicts=False)
+    apply_comment(func, ff := BinjaFeatureExtractor().extract(func))
     print(f"Signature for {ff.function.name}:\n{ff.signature}")
 
 
 def get_signature(view):
-    bs = BinjaFeatureExtractor().extract_from_bv(view)
-    view.session_data["BinarySignature"] = bs
+    view.session_data["BinarySignature"] = (bs := BinjaFeatureExtractor().extract_from_bv(view))
+    for ff in bs.functionFeatureList:
+        apply_comment(ff.function.function, ff)
     print(f"Signature for {view.file.filename}:\n{bs.signature}")
 
 

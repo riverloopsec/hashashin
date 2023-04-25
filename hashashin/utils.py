@@ -5,6 +5,12 @@ import logging
 import os
 from pathlib import Path
 from typing import Union, Iterable
+import git
+import re
+import urllib.request
+from io import BytesIO
+import tarfile
+import subprocess
 
 import binaryninja  # type: ignore
 import magic
@@ -95,3 +101,43 @@ def merge_uint32_to_int(x: npt.NDArray[np.uint32]) -> int:
 def bytes_distance(a: bytes, b: bytes) -> float:
     """Calculate the distance between two byte strings"""
     return np.mean(np.frombuffer(a, dtype=np.uint) != np.frombuffer(b, dtype=np.uint8))
+
+
+def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/net-snmp"):
+    """Download the net-snmp database from GitHub and add signatures to db"""
+    if isinstance(output_dir, str):
+        output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    repo_url = "git@github.com:net-snmp/net-snmp.git"
+    # clone repo if not already present
+    if not (output_dir / ".git").is_dir():
+        logger.info(f"Cloning {repo_url} to {output_dir}")
+        repo = git.Repo.clone_from(repo_url, output_dir)
+    else:
+        logger.info(f"Found existing repo in {output_dir}")
+        repo = git.Repo(output_dir)
+    tags = [t for t in repo.tags if re.match(r"^v[0-9]+\.[0-9]+\.[0-9]+$", t.name)]
+    for tag in tags:
+        logger.info(f"Checking out {tag.name}")
+        repo.git.checkout(tag)
+        breakpoint()
+        # logger.info(f"Running autoreconf")
+        # subprocess.run(["autoreconf", "-fvi"], cwd=output_dir, check=True)
+        # logger.info(f"Running configure")
+        # subprocess.run(["./configure"], cwd=output_dir, check=True)
+        # logger.info(f"Running make")
+        # subprocess.run(["make"], cwd=output_dir, check=True)
+
+
+    # repo = git.Repo.init(path=None)
+    # if 'snmp-origin' not in [r.name for r in repo.remotes]:
+    #     repo.create_remote('snmp-origin', repo_url)
+    #     repo.remote('snmp-origin').fetch(tags=True)
+    # tags = [t for t in repo.tags if re.match(r"^v[0-9]+\.[0-9]+\.[0-9]+$", t.name)]
+    # tgz_path = "https://github.com/net-snmp/net-snmp/archive/refs/tags/%s.tar.gz"
+    # for tag in reversed(tags):
+    #     response = urllib.request.urlopen(tgz_path % tag.name)
+    #     compressed_file = BytesIO(response.read())
+    #     with tarfile.open(fileobj=compressed_file, mode="r:gz") as tar:
+    #         tar.extractall(path=output_dir)
+    #     breakpoint()

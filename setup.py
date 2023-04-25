@@ -38,6 +38,7 @@ setuptools.setup(
         "SQLAlchemy",
         "python-magic",
         "scikit-learn",
+        "GitPython",
         # "matplotlib",
         # "pandas",
         # "seaborn",
@@ -51,6 +52,7 @@ setuptools.setup(
         "console_scripts": [
             "hashashin = hashashin.main:main",
             "flowslicer = flowslicer.flowslicer:Main",
+            "download-snmp-db = hashashin.utils:download_net_snmp_db",
         ]
     },
 )
