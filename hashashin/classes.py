@@ -197,6 +197,17 @@ class FeatureExtractor:
 
     def get_abstract_function(self, path: Path, name: str) -> AbstractFunction:
         raise NotImplementedError
+    
+    @staticmethod
+    def get_extractor_names() -> List[str]:
+        return [subclass.name for subclass in FeatureExtractor.__subclasses__()]
+    
+    @classmethod
+    def from_name(cls, name: str) -> "FeatureExtractor":
+        for subclass in FeatureExtractor.__subclasses__():
+            if subclass.name == name:
+                return subclass()
+        raise ValueError(f"FeatureExtractor {name} not found")
 
     class NotABinaryError(Exception):
         pass
@@ -204,6 +215,7 @@ class FeatureExtractor:
 
 class BinjaFeatureExtractor(FeatureExtractor):
     version = core_version()
+    name = "binja"
 
     def _extract(self, func: BinaryNinjaFunction) -> "FunctionFeatures":
         return FunctionFeatures(

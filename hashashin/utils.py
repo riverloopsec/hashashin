@@ -5,12 +5,8 @@ import logging
 import os
 from pathlib import Path
 from typing import Union, Iterable
-import git
-import re
-import urllib.request
-from io import BytesIO
-import tarfile
 import subprocess
+import git
 
 import binaryninja  # type: ignore
 import magic
@@ -22,7 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 def get_binaries(
-    path: Union[Path, Iterable[Path]], bin_name=None, recursive=True, progress=False, silent=False
+    path: Union[Path, Iterable[Path]],
+    bin_name=None,
+    recursive=True,
+    progress=False,
+    silent=False,
 ) -> list[Path]:
     """Get all binaries in a directory"""
     globber = "*" + "*" * recursive
@@ -57,7 +57,8 @@ def get_binaries(
         disable=not progress,
         desc=f"Gathering binaries in {os.path.relpath(path)}",
     ):
-        if f.is_file():
+        # is file and does not end in .o
+        if f.is_file() and f.suffix != ".o":
             if "ELF" in magic.from_file(f):
                 binaries.append(f)
     if Path(path).is_dir():
@@ -103,41 +104,23 @@ def bytes_distance(a: bytes, b: bytes) -> float:
     return np.mean(np.frombuffer(a, dtype=np.uint) != np.frombuffer(b, dtype=np.uint8))
 
 
-def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/net-snmp"):
-    """Download the net-snmp database from GitHub and add signatures to db"""
-    if isinstance(output_dir, str):
-        output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    repo_url = "git@github.com:net-snmp/net-snmp.git"
-    # clone repo if not already present
-    if not (output_dir / ".git").is_dir():
-        logger.info(f"Cloning {repo_url} to {output_dir}")
-        repo = git.Repo.clone_from(repo_url, output_dir)
-    else:
-        logger.info(f"Found existing repo in {output_dir}")
-        repo = git.Repo(output_dir)
-    tags = [t for t in repo.tags if re.match(r"^v[0-9]+\.[0-9]+\.[0-9]+$", t.name)]
-    for tag in tags:
-        logger.info(f"Checking out {tag.name}")
-        repo.git.checkout(tag)
-        breakpoint()
-        # logger.info(f"Running autoreconf")
-        # subprocess.run(["autoreconf", "-fvi"], cwd=output_dir, check=True)
-        # logger.info(f"Running configure")
-        # subprocess.run(["./configure"], cwd=output_dir, check=True)
-        # logger.info(f"Running make")
-        # subprocess.run(["make"], cwd=output_dir, check=True)
-
-
-    # repo = git.Repo.init(path=None)
-    # if 'snmp-origin' not in [r.name for r in repo.remotes]:
-    #     repo.create_remote('snmp-origin', repo_url)
-    #     repo.remote('snmp-origin').fetch(tags=True)
-    # tags = [t for t in repo.tags if re.match(r"^v[0-9]+\.[0-9]+\.[0-9]+$", t.name)]
-    # tgz_path = "https://github.com/net-snmp/net-snmp/archive/refs/tags/%s.tar.gz"
-    # for tag in reversed(tags):
-    #     response = urllib.request.urlopen(tgz_path % tag.name)
-    #     compressed_file = BytesIO(response.read())
-    #     with tarfile.open(fileobj=compressed_file, mode="r:gz") as tar:
-    #         tar.extractall(path=output_dir)
-    #     breakpoint()
+def build_net_snmp_from_tag(repo: git.Repo, tag: git.Tag, output_dir: Path):
+    """Build a net-snmp binary from a git tag"""
+    logger.info(f"Building net-snmp from tag {tag}")
+    repo.git.clean("-xdf")
+    repo.git.checkout(tag)
+    # ./configure --prefix=$HOME/net-snmp/$(git describe --exact-match --tags $(git log -n1 --pretty='%h')) --enable-shared=no
+    subprocess.run(
+        [
+            "./configure",
+            "--prefix=$HOME/net-snmp/$(git describe --exact-match --tags $(git log -n1 --pretty='%h'))",
+            "--enable-shared=no",
+            "--with-defaults",
+        ],
+        cwd=output_dir,
+        check=True,
+    )
+    # make -j4
+    subprocess.run(["make", "-j4"], cwd=output_dir)
+    # make install
+    subprocess.run(["make", "install"], cwd=output_dir)

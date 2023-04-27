@@ -17,6 +17,7 @@ from hashashin.classes import BinjaFeatureExtractor
 from hashashin.classes import FeatureExtractor
 from hashashin.classes import FunctionFeatures
 from hashashin.db import HashRepository
+from hashashin.db import BinarySignatureRepository
 from hashashin.db import SQLAlchemyBinarySignatureRepository
 from hashashin.db import SQLAlchemyFunctionFeatureRepository
 from hashashin.metrics import stacked_norms
@@ -41,6 +42,66 @@ class HashashinApplicationContext:
     sig_match_threshold: float = 0.5
     # feat_match_threshold: int = 0
     progress: bool = False
+
+    @staticmethod
+    def _parse_args(args: list):
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            "--extractor",
+            type=str,
+            help="Feature extractor to use",
+            choices=FeatureExtractor.get_extractor_names(),
+            default="binja",
+        )
+        parser.add_argument(
+            "--target-path",
+            type=str,
+            help="Path to the binary to hash",
+        )
+        parser.add_argument(
+            "--target-func",
+            type=str,
+            help="Function to hash",
+        )
+        parser.add_argument(
+            "--save-to-db",
+            action="store_true",
+            help="Save to database",
+        )
+        parser.add_argument(
+            "--sig-match-threshold",
+            type=float,
+            help="Signature match threshold",
+            default=0.5,
+        )
+        parser.add_argument(
+            "--progress",
+            action="store_true",
+            help="Show progress bar",
+        )
+        return parser.parse_args(args)
+
+    @classmethod
+    def from_args(cls, args: list):
+        args = cls._parse_args(args)
+        extractor = FeatureExtractor.from_name(args.extractor)
+        hash_repo = HashRepository()
+        target_path = args.target_path
+        target_func = args.target_func
+        save_to_db = args.save_to_db
+        sig_match_threshold = args.sig_match_threshold
+        # feat_match_threshold = args.feat_match_threshold
+        progress = args.progress
+        return cls(
+            extractor,
+            hash_repo,
+            target_path,
+            target_func,
+            save_to_db,
+            sig_match_threshold,
+            # feat_match_threshold,
+            progress,
+        )
 
 
 @dataclass

@@ -1,26 +1,28 @@
 import setuptools  # type: ignore
 
 installed_api = False
-try:
-    import binaryninja  # type: ignore
-except ImportError:
-    import os
-
-    if os.path.exists(
-        "/Applications/Binary Ninja.app/Contents/Resources/scripts/install_api.py"
-    ):
-        installed_api = True
-        print("Installing Binary Ninja API...")
-        os.system(
-            "python3 /Applications/Binary\ Ninja.app/Contents/Resources/scripts/install_api.py"
-        )
-    else:
-        print(
-            "Binary Ninja not found. Please install Binary Ninja using install_api.py first."
-        )
-        import sys
-
-        sys.exit(1)
+#try:
+#    import binaryninja  # type: ignore
+#except ImportError as e:
+#    print("ImportError: {}".format(e))
+#    print("Attempting to install binja for you...")
+#    import os
+#
+#    if os.path.exists(
+#        "/Applications/Binary Ninja.app/Contents/Resources/scripts/install_api.py"
+#    ):
+#        installed_api = True
+#        print("Installing Binary Ninja API...")
+#        os.system(
+#            "python3 /Applications/Binary\ Ninja.app/Contents/Resources/scripts/install_api.py"
+#        )
+#    else:
+#        print(
+#            "Binary Ninja not found. Please install Binary Ninja using install_api.py first."
+#        )
+#        import sys
+#
+#        sys.exit(1)
 
 setuptools.setup(
     name="hashashin",
@@ -52,7 +54,7 @@ setuptools.setup(
         "console_scripts": [
             "hashashin = hashashin.main:main",
             "flowslicer = flowslicer.flowslicer:Main",
-            "download-snmp-db = hashashin.utils:download_net_snmp_db",
+            "populate-db = hashashin.db:populate_db",
         ]
     },
 )

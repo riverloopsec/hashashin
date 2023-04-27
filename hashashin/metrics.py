@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
-import seaborn as sns  # type: ignore
+# import seaborn as sns  # type: ignore
 from sklearn.preprocessing import normalize
 from tqdm import tqdm
 from typing import Tuple, List
@@ -14,17 +14,17 @@ logger.setLevel(logging.INFO)
 logger = logger.getChild(Path(__file__).name)
 
 
-def show_similarity_matrix(mat, labels, title=None, font_scale=0.7, figsize=None):
-    if figsize is None:
-        figsize = (14, 14)
-    if isinstance(mat, list):
-        mat = np.array(mat)
-    if isinstance(labels, list):
-        labels = np.array(labels)
-    sns.set(font_scale=font_scale, rc={"figure.figsize": figsize, "axes.titlesize": 20})
-    sns.heatmap(
-        mat, xticklabels=labels, yticklabels=labels, cmap="Blues", annot=True
-    ).set(title=title)
+# def show_similarity_matrix(mat, labels, title=None, font_scale=0.7, figsize=None):
+#     if figsize is None:
+#         figsize = (14, 14)
+#     if isinstance(mat, list):
+#         mat = np.array(mat)
+#     if isinstance(labels, list):
+#         labels = np.array(labels)
+#     sns.set(font_scale=font_scale, rc={"figure.figsize": figsize, "axes.titlesize": 20})
+#     sns.heatmap(
+#         mat, xticklabels=labels, yticklabels=labels, cmap="Blues", annot=True
+#     ).set(title=title)
 
 
 def hash_paths(

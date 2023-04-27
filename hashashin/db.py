@@ -7,6 +7,11 @@ from typing import List
 from typing import Optional
 from typing import Union
 from typing import Tuple
+from typing import Generator
+import git
+import re
+import subprocess
+import shutil
 
 import numpy as np
 from sqlalchemy import create_engine
@@ -17,10 +22,13 @@ from hashashin.classes import BinarySignature
 from hashashin.classes import FunctionFeatModel
 from hashashin.classes import FunctionFeatures
 from hashashin.classes import ORM_BASE
+from hashashin.utils import build_net_snmp_from_tag
+from hashashin.utils import get_binaries
 import logging
 
 logger = logging.getLogger(__name__)
 SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
+NET_SNMP_BINARY_CACHE = Path(__file__).parent / "binary_data/net-snmp-binaries"
 
 
 class RepositoryType(Enum):
@@ -64,6 +72,16 @@ class BinarySignatureRepository:
 
     def get_id_from_path(self, path: Path):
         raise NotImplementedError
+    
+    @staticmethod
+    def get_repo_names() -> List[str]:
+        return [subclass.name for subclass in BinarySignatureRepository.__subclasses__()]
+    
+    def from_name(self, name: str):
+        for subclass in self.__class__.__subclasses__():
+            if subclass.__name__ == name:
+                return subclass()
+        raise ValueError(f"Unknown repository type {name}")
 
     def __len__(self) -> int:
         raise NotImplementedError
@@ -177,6 +195,8 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
 
 
 class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
+    name = "sqlalchemy"
+
     def __init__(self, db_config: SQLAlchemyConfig = SQLAlchemyConfig()):
         self.config = db_config
         self.engine = create_engine(self.config.db_path)
@@ -358,6 +378,86 @@ class HashRepository:
 
     def __len__(self) -> int:
         return len(self.binary_repo)
+
+
+def _cache_snmp_binary(path: Path, version: str) -> Path:
+    """Save compiled net-snmp binary to disk"""
+    if not NET_SNMP_BINARY_CACHE.is_dir():
+        NET_SNMP_BINARY_CACHE.mkdir(parents=True, exist_ok=True)
+    cache_path = NET_SNMP_BINARY_CACHE / f"net-snmp-{version}"
+    cache_path.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, cache_path / path.name)
+    return cache_path / path.name
+
+
+def cache_snmp_binaries(binary_paths: list, version: str) -> Generator[Path, None, None]:
+    """Save compiled net-snmp binaries to disk"""
+    for path in binary_paths:
+        yield _cache_snmp_binary(path, version)
+
+
+
+def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/net-snmp"):
+    """Download the net-snmp database from GitHub and add signatures to db"""
+    # TODO: get rid of lazy imports
+    from hashashin.main import ApplicationFactory, HashashinApplicationContext
+    if isinstance(output_dir, str):
+        output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    repo_url = "git@github.com:net-snmp/net-snmp.git"
+    # clone repo if not already present
+    if not (output_dir / ".git").is_dir():
+        logger.info(f"Cloning {repo_url} to {output_dir}")
+        repo = git.Repo.clone_from(repo_url, output_dir)
+    else:
+        logger.info(f"Found existing repo in {output_dir}")
+        repo = git.Repo(output_dir)
+    # match all tags above v5.0
+    tags = [t for t in repo.tags if re.match(r"^v[5-9]\.[0-9](?:\.[0-9]+)?$", t.name)]
+
+    hashApp = ApplicationFactory.getHasher(HashashinApplicationContext.from_args(["--save-to-db"]))
+    successes = []
+    for tag in tags:
+        # check if tag has already been built and cached
+        if (NET_SNMP_BINARY_CACHE / f"net-snmp-{tag.name}").is_dir() and len(
+            cached_binaries := list(NET_SNMP_BINARY_CACHE.glob(f"net-snmp-{tag.name}/*"))
+        ) > 0:
+            logger.info(f"Found cached binaries for {tag.name}")
+        else:
+            try:
+                build_net_snmp_from_tag(repo, tag, output_dir)
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error building net-snmp {tag.name}: {e}")
+                continue
+            binaries = get_binaries(output_dir / "apps")
+            if len(binaries) == 0:
+                logger.warning(f"No binaries found after building {tag.name}")
+                continue
+            cached_binaries = list(cache_snmp_binaries(binaries, tag.name))
+        logger.info(f"Computing signatures for {len(cached_binaries)} binaries in {tag.name}")
+        signatures = list()
+        for bin in cached_binaries:
+            sig = hashApp.target(bin)
+            if len(sig) != 1:
+                logger.warning(f"Found {len(sig)} signatures for {bin.name}")
+                breakpoint()
+            signatures.append(sig[0])
+        successes.append(tag.name)
+    failures = [t.name for t in tags if t.name not in successes]
+    logger.info(f"Successfully built {len(successes)} net-snmp versions: {successes}")
+    logger.info(f"Failed to build {len(failures)} net-snmp versions: {failures}")
+    return successes
+        
+
+
+def populate_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/"):
+    logging.basicConfig(
+        format='%(asctime)s,%(msecs)03d %(levelname)-6s [%(filename)s:%(lineno)d] %(message)s',
+        datefmt='%Y-%m-%d:%H:%M:%S',
+        level='INFO',
+    )
+    success = compute_net_snmp_db(output_dir / "net-snmp")
+    breakpoint()
 
 
 if __name__ == "__main__":
