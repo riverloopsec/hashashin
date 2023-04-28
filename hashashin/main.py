@@ -22,7 +22,10 @@ from hashashin.db import SQLAlchemyBinarySignatureRepository
 from hashashin.db import SQLAlchemyFunctionFeatureRepository
 from hashashin.metrics import stacked_norms
 from hashashin.utils import get_binaries
+from hashashin.utils import list_rindex
 import logging
+
+from hashashin.db import NET_SNMP_BINARY_CACHE
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +320,9 @@ def get_parser():
     demo_group.add_argument(
         "--stdlib", action="store_true", help="Standard library matching"
     )
+    demo_group.add_argument(
+        "--snmp", action="store_true", help="net-snmp matching"
+    )
     parser.add_argument(
         "--debug", "-d", action="store_true", help="Enable debug logging"
     )
@@ -468,9 +474,74 @@ def main(args: Optional[argparse.Namespace] = None):
                 #     logger.debug(f"{Path(stdlib_path).name}:\t{stdlib_features[i].name}\n")
                 #     # logger.debug(f"Dist:\t\t{best_matches[i]}\n")
                 #     breakpoint()
+    if args.snmp:
+        if not isinstance(ret[0], BinarySignature):
+            raise NotImplementedError("SNMP matching not implemented for single function yet")
+        logger.info("Gathering SNMP signatures...")
+        snmp_signatures = app.context.hash_repo.get_snmp_signatures()
+        try:
+            for target_bin in ret:
+                logger.info(f"Calculating distances for {target_bin.path}")
+                try:
+                    jaccard_estimate = [target_bin // sig for sig in tqdm(snmp_signatures, desc="Jaccard Estimate")]
+                    minhash_similarity = [target_bin ^ sig for sig in tqdm(snmp_signatures, desc="Minhash Similarity")]
+                except KeyboardInterrupt:
+                    breakpoint()
+                logger.info("Sorting results...")
+                jaccard_estimate = sorted(zip(jaccard_estimate, snmp_signatures), key=lambda x: x[0], reverse=True)
+                minhash_similarity = sorted(zip(minhash_similarity, snmp_signatures), key=lambda x: x[0], reverse=True)
+                jaccard_closest_bins = jaccard_estimate[:list_rindex([x[0] for x in jaccard_estimate], max(jaccard_estimate, key=lambda x: x[0])[0]) + 1]
+                jaccard_closest_paths = [x[1].path for x in jaccard_closest_bins]
+                minhash_closest_bins = minhash_similarity[:list_rindex([x[0] for x in minhash_similarity], max(minhash_similarity, key=lambda x: x[0])[0]) + 1]
+                minhash_closest_paths = [x[1].path for x in minhash_closest_bins]
+                if any(target_bin.path.name in str(path) for path in jaccard_closest_paths):
+                    likely_matches = [x for x in jaccard_closest_bins if target_bin.path.name in str(x[1].path)]
+                    print(f"Jaccard likely matches for {target_bin.path}:")
+                    spaces = max([len(str(x[1].path.relative_to(NET_SNMP_BINARY_CACHE))) for x in likely_matches])
+                    format = f"{{path:{{spaces}}}}: {{score}}"
+                    print("\t" + "\n\t".join([format.format(path=str(x[1].path.relative_to(NET_SNMP_BINARY_CACHE)), score=x[0], spaces=spaces) for x in likely_matches]) + "\n")
+                else:
+                    # print top 5 closest matches
+                    print(f"Top 5 Jaccard Estimate matches for {target_bin.path}:")
+                    spaces = max([len(str(x[1].path.relative_to(NET_SNMP_BINARY_CACHE))) for x in jaccard_estimate[:5]])
+                    format = f"{{path:{{spaces}}}}: {{score}}"
+                    print("\t" + "\n\t".join([format.format(path=str(x[1].path.relative_to(NET_SNMP_BINARY_CACHE)), score=x[0], spaces=spaces) for x in jaccard_estimate[:5]]) + "\n")
+            
+                if any(target_bin.path.name in str(path) for path in minhash_closest_paths):
+                    likely_matches = [x for x in minhash_closest_bins if target_bin.path.name in str(x[1].path)]
+                    print(f"Minhash likely matches for {target_bin.path}:")
+                    spaces = max([len(str(x[1].path.relative_to(NET_SNMP_BINARY_CACHE))) for x in likely_matches])
+                    format = f"{{path:{{spaces}}}}: {{score}}"
+                    print("\t" + "\n\t".join([format.format(path=str(x[1].path.relative_to(NET_SNMP_BINARY_CACHE)), score=x[0], spaces=spaces) for x in likely_matches]) + "\n")
+                else:
+                    # print top 5 closest matches
+                    print(f"Top 5 Minhash Similarity matches for {target_bin.path}:")
+                    spaces = max([len(str(x[1].path.relative_to(NET_SNMP_BINARY_CACHE))) for x in minhash_similarity[:5]])
+                    format = f"{{path:{{spaces}}}}: {{score}}"
+                    print("\t" + "\n\t".join([format.format(path=str(x[1].path.relative_to(NET_SNMP_BINARY_CACHE)), score=x[0], spaces=spaces) for x in minhash_similarity[:5]]) + "\n")
+
+        except Exception as e:
+            print(e)
+            breakpoint()
+
+
+            # print(f"Top {args.matches} Jaccard Estimate matches for {target_bin.path}:")
+            # spaces = max([len(str(x[1])) for x in jaccard_estimate[:args.matches]])
+            # format = f"{{path:{{spaces}}}}: {{score}}"
+            # print("\t" + "\n\t".join([format.format(path=x[1].path, score=x[0], spaces=spaces) for x in jaccard_estimate[:args.matches]]) + "\n")
+            # print(f"Top {args.matches} Minhash Similarity matches for {target_bin.path}:")
+            # spaces = max([len(str(x[1])) for x in minhash_similarity[:args.matches]])
+            # format = f"{{path:{{spaces}}}}: {{score}}"
+            # print("\t" + "\n\t".join([format.format(path=x[1].path, score=x[0], spaces=spaces) for x in minhash_similarity[:args.matches]]) + "\n")
 
     print("Done!")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Aborting")
+    except Exception as e:
+        print(f"Error: {e}")
+        breakpoint()

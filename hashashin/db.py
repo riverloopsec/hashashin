@@ -12,6 +12,7 @@ import git
 import re
 import subprocess
 import shutil
+import os
 
 import numpy as np
 from sqlalchemy import create_engine
@@ -68,6 +69,9 @@ class BinarySignatureRepository:
         raise NotImplementedError
 
     def getAll(self):
+        raise NotImplementedError
+    
+    def get_snmp_signatures(self, version: Optional[str]):
         raise NotImplementedError
 
     def get_id_from_path(self, path: Path):
@@ -296,6 +300,18 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
     def getAll(self) -> List[BinarySignature]:
         with self.session() as session:
             return [BinarySignature.fromModel(x) for x in session.query(BinarySigModel).all()]
+    
+    def get_snmp_signatures(self, version: Optional[str]) -> List[BinarySignature]:
+        with self.session() as session:
+            if version:
+                raise NotImplementedError("SNMP version filtering not implemented")
+            # return all signatures with NET_SNMP_BINARY_CACHE.name in path
+            return [
+                BinarySignature.fromModel(x)
+                for x in session.query(BinarySigModel).filter(
+                    BinarySigModel.path.like(f"%{NET_SNMP_BINARY_CACHE.name}%")
+                )
+            ]
 
     def get_id_from_path(self, path: Path):
         with self.session() as session:
@@ -375,6 +391,9 @@ class HashRepository:
         self, signature: BinarySignature, threshold: float = 0.5
     ) -> List[BinarySignature]:
         return self.binary_repo.match_signature(signature, threshold)
+    
+    def get_snmp_signatures(self, version: Optional[str] = None) -> List[BinarySignature]:
+        return self.binary_repo.get_snmp_signatures(version)
 
     def __len__(self) -> int:
         return len(self.binary_repo)
@@ -396,8 +415,15 @@ def cache_snmp_binaries(binary_paths: list, version: str) -> Generator[Path, Non
         yield _cache_snmp_binary(path, version)
 
 
+def get_latest_hashed_snmp_tag(tags: list) -> Optional[git.Tag]:
+    for tag in reversed(tags):
+        dirpath = NET_SNMP_BINARY_CACHE / f"net-snmp-{tag.name}"
+        if dirpath.is_dir() and len(os.listdir(dirpath)) > 0:
+            return tag
+    return None
 
-def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/net-snmp"):
+
+def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/net-snmp", skip_failed_builds: bool = True):
     """Download the net-snmp database from GitHub and add signatures to db"""
     # TODO: get rid of lazy imports
     from hashashin.main import ApplicationFactory, HashashinApplicationContext
@@ -414,7 +440,8 @@ def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "
         repo = git.Repo(output_dir)
     # match all tags above v5.0
     tags = [t for t in repo.tags if re.match(r"^v[5-9]\.[0-9](?:\.[0-9]+)?$", t.name)]
-
+    last_built_tag = get_latest_hashed_snmp_tag(tags)
+    lbt_index = tags.index(last_built_tag) if last_built_tag is not None else -1
     hashApp = ApplicationFactory.getHasher(HashashinApplicationContext.from_args(["--save-to-db"]))
     successes = []
     for tag in tags:
@@ -424,11 +451,18 @@ def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "
         ) > 0:
             logger.info(f"Found cached binaries for {tag.name}")
         else:
+            # skip if tag is not cached but a higher version is cached
+            if skip_failed_builds and tags.index(tag) <= lbt_index:
+                logger.info(f"Skipping {tag.name} because higher version has already been built meaning this tag likely will fail building.")
+                continue
             try:
                 build_net_snmp_from_tag(repo, tag, output_dir)
             except subprocess.CalledProcessError as e:
                 logger.error(f"Error building net-snmp {tag.name}: {e}")
                 continue
+            except Exception as e:
+                logger.error(f"Error collecting net-snmp {tag.name}: {e}")
+                breakpoint()
             binaries = get_binaries(output_dir / "apps")
             if len(binaries) == 0:
                 logger.warning(f"No binaries found after building {tag.name}")

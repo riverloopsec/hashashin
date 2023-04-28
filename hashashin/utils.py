@@ -104,9 +104,19 @@ def bytes_distance(a: bytes, b: bytes) -> float:
     return np.mean(np.frombuffer(a, dtype=np.uint) != np.frombuffer(b, dtype=np.uint8))
 
 
+def list_rindex(l: list, v: object) -> int:
+    """Return the last index of an element in a list"""
+    return len(l) - l[::-1].index(v) - 1
+
+
 def build_net_snmp_from_tag(repo: git.Repo, tag: git.Tag, output_dir: Path):
     """Build a net-snmp binary from a git tag"""
     logger.info(f"Building net-snmp from tag {tag}")
+    repo.git.clean("-xdf")
+    # git reset HEAD
+    repo.git.reset("HEAD")
+    # git checkout .
+    repo.git.checkout(".")
     repo.git.clean("-xdf")
     repo.git.checkout(tag)
     # ./configure --prefix=$HOME/net-snmp/$(git describe --exact-match --tags $(git log -n1 --pretty='%h')) --enable-shared=no
