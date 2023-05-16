@@ -11,6 +11,7 @@ from typing import Tuple, List
 
 import numpy as np
 from tqdm import tqdm
+import pickle
 
 from hashashin.classes import BinarySignature
 from hashashin.classes import BinjaFeatureExtractor
@@ -40,8 +41,8 @@ class HashashinApplicationContext:
     extractor: FeatureExtractor
     hash_repo: HashRepository
     target_path: Optional[Union[Path, Iterable[Path]]]
-    target_func: Optional[str]
     save_to_db: Optional[bool]
+    target_func: Optional[str] = None
     sig_match_threshold: float = 0.5
     # feat_match_threshold: int = 0
     progress: bool = False
@@ -553,7 +554,11 @@ def main(args: Optional[argparse.Namespace] = None):
                 "SNMP matching not implemented for single function yet"
             )
         logger.info("Gathering SNMP signatures...")
-        snmp_signatures = app.context.hash_repo.get_snmp_signatures()
+        if Path(".snmp_signatures").exists():
+            with open(".snmp_signatures", "rb") as f:
+                snmp_signatures = pickle.load(f)
+        else:
+            snmp_signatures = app.context.hash_repo.get_snmp_signatures()
         try:
             for target_bin in ret:
                 logger.info(f"Calculating distances for {target_bin.path}")
