@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Union, Iterable
+from typing import Union, Iterable, Optional
 import subprocess
 import git
 
@@ -134,3 +134,31 @@ def build_net_snmp_from_tag(repo: git.Repo, tag: git.Tag, output_dir: Path):
     subprocess.run(["make", "-j4"], cwd=output_dir)
     # make install
     subprocess.run(["make", "install"], cwd=output_dir)
+
+
+def resolve_relative_path(path: Union[Path, str], root: Optional[Path] = None) -> Path:
+    """Get a path's absolute path"""
+    if isinstance(path, str):
+        path = Path(path)
+    if path.is_absolute():
+        return path
+    # search for it from module root by globbing
+    if root is None:
+        root = Path(__file__).resolve().parent.parent
+    elif not root.is_absolute():
+        raise ValueError("root must be an absolute path")
+    for i in range(len(path.parts)):
+        if path.parts[i] == "..":
+            continue
+        if (root / path).is_file():
+            return root / path
+        res = list(root.rglob("/".join(path.parts[i:])))
+        if len(res) == 0:
+            continue
+        elif len(res) > 1:
+            prnt = "\n".join(str(r) for r in res)
+            raise FileNotFoundError(
+                f"Found multiple {path} from module root:\n{prnt}",
+            )
+        return res[0]
+    raise FileNotFoundError(f"Could not find {path} from module root")

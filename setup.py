@@ -55,6 +55,7 @@ setuptools.setup(
             "hashashin = hashashin.main:main",
             "flowslicer = flowslicer.flowslicer:Main",
             "populate-db = hashashin.db:populate_db",
+            "safedocs-demo = demos.safedocs_05_16_demo:safedocs_demo",
         ]
     },
 )

@@ -13,6 +13,7 @@ import re
 import subprocess
 import shutil
 import os
+from tqdm import tqdm
 
 import numpy as np
 from sqlalchemy import create_engine
@@ -25,11 +26,13 @@ from hashashin.classes import FunctionFeatures
 from hashashin.classes import ORM_BASE
 from hashashin.utils import build_net_snmp_from_tag
 from hashashin.utils import get_binaries
+from hashashin.utils import resolve_relative_path
 import logging
 
 logger = logging.getLogger(__name__)
 SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
 NET_SNMP_BINARY_CACHE = Path(__file__).parent / "binary_data/net-snmp-binaries"
+BINARY_DATA_SUMMARY_PATH = Path(__file__).parent / "binary_data"
 
 
 class RepositoryType(Enum):
@@ -47,6 +50,7 @@ class RepositoryConfig(ABC):
 
 class BinarySignatureRepository:
     config: RepositoryConfig
+    name: str
 
     def store_signature(self, binary: BinarySignature):
         raise NotImplementedError
@@ -75,6 +79,9 @@ class BinarySignatureRepository:
         raise NotImplementedError
 
     def get_id_from_path(self, path: Path):
+        raise NotImplementedError
+
+    def get_hashed_binary_classes(self):
         raise NotImplementedError
     
     @staticmethod
@@ -319,6 +326,12 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
             if saved:
                 return saved.id
 
+    def get_hashed_binary_classes(self):
+        # get all paths from database
+        with self.session() as session:
+            paths = [x.path for x in session.query(BinarySigModel).all()]
+        breakpoint()
+
     def __len__(self) -> int:
         with self.session() as session:
             return session.query(BinarySigModel).count()
@@ -331,6 +344,26 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
                 cached = session.query(BinarySigModel).filter_by(path=str(option))
                 cached.delete()
                 session.commit()
+
+    def summary(self):
+        """Print summary of database.
+        Print the number of binaries and functions in each path relative to binary_data directory"""
+        with self.session() as session:
+            paths = [
+                resolve_relative_path(x.path, BINARY_DATA_SUMMARY_PATH)
+                for x in tqdm(
+                    session.query(BinarySigModel).all(),
+                    desc="Resolving paths",
+                )
+            ]
+            paths = [x.relative_to(BINARY_DATA_SUMMARY_PATH) for x in paths]
+            for path in paths:
+                print(f"{path}: {paths.count(path)}")
+                # get number of functions relative to path
+                functions = session.query(FunctionFeatModel).filter(
+                    FunctionFeatModel.path.like(f"%{path}%")
+                )
+                print(f"  Functions: {functions.count()}")
 
 
 class HashRepository:
