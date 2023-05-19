@@ -22,3 +22,6 @@ If you would like to run the provided tests or notebook, run `pip install .[dev]
 
 ### libcurl similarity matrix
 ![](libcurl_similarity_matrix.png)
+
+### net-snmp similarity matrix
+![](net-snmp-full-matrix.png)
