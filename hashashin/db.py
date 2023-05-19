@@ -8,16 +8,19 @@ from typing import Optional
 from typing import Union
 from typing import Tuple
 from typing import Generator
+from typing import Iterable
 import git
 import re
 import subprocess
 import shutil
 import os
 from tqdm import tqdm
+from multiprocessing import Pool
 
 import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import func
 
 from hashashin.classes import BinarySigModel
 from hashashin.classes import BinarySignature
@@ -27,12 +30,16 @@ from hashashin.classes import ORM_BASE
 from hashashin.utils import build_net_snmp_from_tag
 from hashashin.utils import get_binaries
 from hashashin.utils import resolve_relative_path
+from hashashin.classes import BinjaFeatureExtractor
 import logging
 
 logger = logging.getLogger(__name__)
 SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
 NET_SNMP_BINARY_CACHE = Path(__file__).parent / "binary_data/net-snmp-binaries"
 BINARY_DATA_SUMMARY_PATH = Path(__file__).parent / "binary_data"
+LIBRARY_PATHS = {
+    "net-snmp": (Path(__file__).parent / "binary_data/libraries/net-snmp-binaries", 611)
+}
 
 
 class RepositoryType(Enum):
@@ -72,6 +79,9 @@ class BinarySignatureRepository:
     def get(self, path: Path):
         raise NotImplementedError
 
+    def hashAll(self, path: Path):
+        raise NotImplementedError
+
     def getAll(self):
         raise NotImplementedError
     
@@ -82,6 +92,9 @@ class BinarySignatureRepository:
         raise NotImplementedError
 
     def get_hashed_binary_classes(self):
+        raise NotImplementedError
+
+    def get_binaries_in_path(self, path: Path):
         raise NotImplementedError
     
     @staticmethod
@@ -365,6 +378,17 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
                 )
                 print(f"  Functions: {functions.count()}")
 
+    def get_binaries_in_path(self, path: Path):
+        """Get all BinarySignatures with a path that is a subpath of the given path"""
+        with self.session() as session:
+            p = path.relative_to(Path(__file__).parent / "binary_data")
+            return [
+                BinarySignature.fromModel(x)
+                for x in session.query(BinarySigModel).filter(
+                    BinarySigModel.path.contains(str(p))
+                ).all()
+            ]
+
 
 class HashRepository:
     @staticmethod
@@ -427,6 +451,59 @@ class HashRepository:
     
     def get_snmp_signatures(self, version: Optional[str] = None) -> List[BinarySignature]:
         return self.binary_repo.get_snmp_signatures(version)
+
+    @staticmethod
+    def _process_file(t):
+        extractor = BinjaFeatureExtractor()
+        try:
+            target_signature = extractor.extract_from_file(
+                t
+            )
+        except BinjaFeatureExtractor.NotABinaryError as e:
+            logger.warning(f"Skipping {t}: {e}")
+            return None
+        breakpoint()
+        return target_signature
+
+    def hashAll(self, target_path: Union[Path, list[Path]]) -> Iterable[BinarySignature]:
+        # TODO: Write this better smh, hardcoding binja is bad :(
+        if isinstance(target_path, list) and not all(p.exists() for p in target_path):
+            raise ValueError(
+                f"List of target binaries contains non-existent paths: {target_path}"
+            )
+        if isinstance(target_path, Path) and not target_path.exists():
+            raise ValueError(
+                f"Target binary does not exist: {target_path}"
+            )
+        extractor = BinjaFeatureExtractor()
+        targets = get_binaries(
+            target_path, progress=True, recursive=True
+        )
+        pbar = tqdm(targets)  # type: ignore
+        for t in pbar:
+            pbar.set_description(f"Hashing {t}")  # type: ignore
+            cached = self.get(t)
+            if cached is not None:
+                pbar.set_description(f"Retrieved {t} from db")  # type: ignore
+                logger.debug(f"Binary {t} already hashed, skipping")
+                yield cached
+                continue
+            else:
+                logger.debug(f"{t} not found in cache")
+            try:
+                target_signature = extractor.extract_from_file(
+                    t,
+                    progress_kwargs={
+                        "desc": lambda f: f"Extracting fn {f.name} @ {f.start:#x}",
+                        "position": 1,
+                        "leave": False,
+                    },
+                )
+            except BinjaFeatureExtractor.NotABinaryError as e:
+                logger.warning(f"Skipping {t}: {e}")
+                continue
+            self.save(target_signature)
+            yield target_signature
 
     def __len__(self) -> int:
         return len(self.binary_repo)
@@ -514,7 +591,6 @@ def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "
     logger.info(f"Successfully built {len(successes)} net-snmp versions: {successes}")
     logger.info(f"Failed to build {len(failures)} net-snmp versions: {failures}")
     return successes
-        
 
 
 def populate_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/"):
@@ -525,6 +601,72 @@ def populate_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_d
     )
     success = compute_net_snmp_db(output_dir / "net-snmp")
     breakpoint()
+
+
+def get_closest_library_version(
+        library: str, bin_path: Union[str, Path], generate: bool = False,
+) -> Optional[str]:
+    """Compute the closest library version for a given binary.
+    Args:
+        library (str): Library to match against
+        bin_path (str): Path to binary
+        generate (bool): Generate library signatures if not present.
+            If True and the library binaries are not found in the path
+            listed in LIBRARY_PATHS, an error will be thrown.
+
+    Returns:
+        str: Closest library version or None
+    """
+    # Validate binary exists
+    if not Path(bin_path).exists():
+        raise ValueError(f"Invalid binary path {bin_path} does not exist")
+    # Validate database contains library
+    if library not in LIBRARY_PATHS:
+        raise ValueError(f"Invalid library {library} not in {LIBRARY_PATHS.keys()}")
+    # Validate library binaries exist
+    library_path, library_count = LIBRARY_PATHS[library]
+    db = HashRepository()
+    ps = db.binary_repo.get_binaries_in_path(library_path)
+    if len(ps) != library_count:
+        if generate:
+            logger.info(f"Generating signatures for {library} binaries")
+            hashed_lib_bins = list(db.hashAll(library_path))
+        else:
+            raise ValueError(f"Library binaries not found in {library_path}. "
+                             f"Pass --generate to generate signatures.")
+    breakpoint()
+
+
+    # Triage by filename
+    # Compute BinarySignature
+    # Triage by BinarySignature
+    # Triage by FunctionFeatures robust matching
+    # if the confidence is above threshold, return the library version
+    # else return None
+    return None
+
+
+def get_closest_library_version_cli() -> Optional[str]:
+    """CLI entrypoint for get_closest_library_version"""
+    import argparse
+    parser = argparse.ArgumentParser(description="Match a binary against a library")
+    parser.add_argument(
+        "library", type=str, choices=LIBRARY_PATHS.keys(), default="net-snmp",
+        help="Library to match against"
+    )
+    parser.add_argument(
+        "bin_path", type=str, help="Path to binary"
+    )
+    parser.add_argument(
+        "--generate", action="store_true", help="Generate library signatures if not present"
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Verbose logging"
+    )
+    args = parser.parse_args()
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    return get_closest_library_version(args.library, args.bin_path, args.generate)
 
 
 if __name__ == "__main__":

@@ -4,3 +4,6 @@
 [submodule "hashashin/net-snmp"]
 	path = hashashin/net-snmp
 	url = git@github.com:net-snmp/net-snmp.git
+[submodule "binaryninja-api"]
+	path = binaryninja-api
+	url = git@github.com:Vector35/binaryninja-api.git

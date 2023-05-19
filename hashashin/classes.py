@@ -53,7 +53,7 @@ class BinarySigModel(ORM_BASE):
     __allow_unmapped__ = True
     id = Column(Integer, primary_key=True)
     hash = Column(LargeBinary, unique=True, index=True)
-    path = Column(String)
+    path = Column(String, index=True)
     sig = Column(LargeBinary, nullable=True)
     functions: RelationshipProperty = relationship("FunctionFeatModel", cascade="all, delete-orphan")
     extraction_engine = Column(String)
