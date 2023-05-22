@@ -16,6 +16,7 @@ import shutil
 import os
 from tqdm import tqdm
 from multiprocessing import Pool
+import pickle
 
 import numpy as np
 from sqlalchemy import create_engine
@@ -31,14 +32,19 @@ from hashashin.utils import build_net_snmp_from_tag
 from hashashin.utils import get_binaries
 from hashashin.utils import resolve_relative_path
 from hashashin.classes import BinjaFeatureExtractor
+from hashashin.metrics import matrix_norms
 import logging
 
 logger = logging.getLogger(__name__)
 SIG_DB_PATH = Path(__file__).parent / "hashashin.db"
 NET_SNMP_BINARY_CACHE = Path(__file__).parent / "binary_data/net-snmp-binaries"
 BINARY_DATA_SUMMARY_PATH = Path(__file__).parent / "binary_data"
+# TODO: Figure out why library only has 576 binaries not 611. Likely due to duplicate binary hashes.
 LIBRARY_PATHS = {
-    "net-snmp": (Path(__file__).parent / "binary_data/libraries/net-snmp-binaries", 611)
+    "net-snmp": (Path(__file__).parent / "binary_data/libraries/net-snmp-binaries", 576)
+}
+LIBRARY_TRIAGE = {
+    "net-snmp": lambda filename: "snmp" in str(filename),
 }
 
 
@@ -72,7 +78,9 @@ class BinarySignatureRepository:
         """Return all matching signatures with a similarity above the threshold."""
         raise NotImplementedError
 
-    def fast_match(self, signature: BinarySignature, threshold: float = 0.5) -> List[BinarySignature]:
+    def fast_match(
+        self, signature: BinarySignature, threshold: float = 0.5
+    ) -> List[BinarySignature]:
         """Return all matching signatures with a similarity above the threshold."""
         raise NotImplementedError
 
@@ -84,7 +92,7 @@ class BinarySignatureRepository:
 
     def getAll(self):
         raise NotImplementedError
-    
+
     def get_snmp_signatures(self, version: Optional[str]):
         raise NotImplementedError
 
@@ -96,11 +104,13 @@ class BinarySignatureRepository:
 
     def get_binaries_in_path(self, path: Path):
         raise NotImplementedError
-    
+
     @staticmethod
     def get_repo_names() -> List[str]:
-        return [subclass.name for subclass in BinarySignatureRepository.__subclasses__()]
-    
+        return [
+            subclass.name for subclass in BinarySignatureRepository.__subclasses__()
+        ]
+
     def from_name(self, name: str):
         for subclass in self.__class__.__subclasses__():
             if subclass.__name__ == name:
@@ -130,7 +140,9 @@ class FunctionFeatureRepository:
     def get_bin_count(self, binary_id: int):
         raise NotImplementedError
 
-    def get_feature_matrix(self, binary: Optional[str]) -> Tuple[np.array, List[FunctionFeatModel]]:
+    def get_feature_matrix(
+        self, binary: Optional[str]
+    ) -> Tuple[np.array, List[FunctionFeatModel]]:
         raise NotImplementedError
 
 
@@ -177,20 +189,37 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
         with self.session() as session:
             return session.query(FunctionFeatModel).all()
 
-    def get_feature_matrix(self, binary_path: Optional[Path]) -> Tuple[np.array, List[FunctionFeatModel]]:
+    def get_feature_matrix(
+        self, binary_path: Optional[Path]
+    ) -> Tuple[np.array, List[FunctionFeatModel]]:
         with self.session() as session:
             features = session.query(FunctionFeatModel)
             if binary_path is not None:
-                bin_id = session.query(BinarySigModel).filter_by(path=str(binary_path)).first()
+                bin_id = (
+                    session.query(BinarySigModel)
+                    .filter_by(path=str(binary_path))
+                    .first()
+                )
                 if bin_id is None:
-                    if session.query(BinarySigModel).filter_by(path=str('hashashin' / binary_path)).first() is not None:
-                        bin_id = session.query(BinarySigModel).filter_by(path=str('hashashin' / binary_path)).first()
+                    if (
+                        session.query(BinarySigModel)
+                        .filter_by(path=str("hashashin" / binary_path))
+                        .first()
+                        is not None
+                    ):
+                        bin_id = (
+                            session.query(BinarySigModel)
+                            .filter_by(path=str("hashashin" / binary_path))
+                            .first()
+                        )
                     else:
                         raise ValueError(f"Binary {binary_path} not found in database")
                 features = features.filter_by(bin_id=bin_id.id)
             features = features.all()
-            return np.stack([FunctionFeatures.fromModel(x).asArray() for x in features]), features
-
+            return (
+                np.stack([FunctionFeatures.fromModel(x).asArray() for x in features]),
+                features,
+            )
 
     # def match(self, fn: FunctionFeatures, threshold: float = 0.95) -> list[FunctionFeatures]:
     #     with self.session() as session:
@@ -244,7 +273,9 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
             session.refresh(binary)
         return binary
 
-    def fast_match(self, signature: BinarySignature, threshold: float = 0.5) -> List[BinarySignature]:
+    def fast_match(
+        self, signature: BinarySignature, threshold: float = 0.5
+    ) -> List[BinarySignature]:
         with self.session() as session:
             if threshold == 0:
                 return (
@@ -253,7 +284,13 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
                     .all()
                 )
             signatures = session.query(BinarySigModel).all()
-            signatures = list(filter(lambda s: (s ^ signature).count(b'\x00') > threshold * len(signature.signature), signatures))
+            signatures = list(
+                filter(
+                    lambda s: (s ^ signature).count(b"\x00")
+                    > threshold * len(signature.signature),
+                    signatures,
+                )
+            )
             sorted_signatures = sorted(
                 signatures,
                 key=lambda sig: BinarySignature.fromModel(sig) // signature,
@@ -264,9 +301,11 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
     def match_signature(
         self, signature: BinarySignature, threshold: float = 0.5
     ) -> List[BinarySignature]:
+        if threshold == 0:
+            raise ValueError("Threshold must be > 0")
         logger.warning("This is a very slow operation. (O(n))")
         with self.session() as session:
-            if threshold == 0:
+            if threshold == 1:
                 return (
                     session.query(BinarySigModel)
                     .filter(BinarySigModel.sig == signature.signature)
@@ -319,8 +358,11 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
 
     def getAll(self) -> List[BinarySignature]:
         with self.session() as session:
-            return [BinarySignature.fromModel(x) for x in session.query(BinarySigModel).all()]
-    
+            return [
+                BinarySignature.fromModel(x)
+                for x in session.query(BinarySigModel).all()
+            ]
+
     def get_snmp_signatures(self, version: Optional[str]) -> List[BinarySignature]:
         with self.session() as session:
             if version:
@@ -380,13 +422,17 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
 
     def get_binaries_in_path(self, path: Path):
         """Get all BinarySignatures with a path that is a subpath of the given path"""
+        logger.debug(f"Getting binaries in path {path}")
         with self.session() as session:
             p = path.relative_to(Path(__file__).parent / "binary_data")
             return [
                 BinarySignature.fromModel(x)
-                for x in session.query(BinarySigModel).filter(
-                    BinarySigModel.path.contains(str(p))
-                ).all()
+                for x in tqdm(
+                    session.query(BinarySigModel)
+                    .filter(BinarySigModel.path.contains(str(p)))
+                    .all(),
+                    disable=not logger.isEnabledFor(logging.DEBUG),
+                )
             ]
 
 
@@ -448,37 +494,35 @@ class HashRepository:
         self, signature: BinarySignature, threshold: float = 0.5
     ) -> List[BinarySignature]:
         return self.binary_repo.match_signature(signature, threshold)
-    
-    def get_snmp_signatures(self, version: Optional[str] = None) -> List[BinarySignature]:
+
+    def get_snmp_signatures(
+        self, version: Optional[str] = None
+    ) -> List[BinarySignature]:
         return self.binary_repo.get_snmp_signatures(version)
 
     @staticmethod
     def _process_file(t):
         extractor = BinjaFeatureExtractor()
         try:
-            target_signature = extractor.extract_from_file(
-                t
-            )
+            target_signature = extractor.extract_from_file(t)
         except BinjaFeatureExtractor.NotABinaryError as e:
             logger.warning(f"Skipping {t}: {e}")
             return None
         breakpoint()
         return target_signature
 
-    def hashAll(self, target_path: Union[Path, list[Path]]) -> Iterable[BinarySignature]:
+    def hashAll(
+        self, target_path: Union[Path, List[Path]]
+    ) -> Iterable[BinarySignature]:
         # TODO: Write this better smh, hardcoding binja is bad :(
         if isinstance(target_path, list) and not all(p.exists() for p in target_path):
             raise ValueError(
                 f"List of target binaries contains non-existent paths: {target_path}"
             )
         if isinstance(target_path, Path) and not target_path.exists():
-            raise ValueError(
-                f"Target binary does not exist: {target_path}"
-            )
+            raise ValueError(f"Target binary does not exist: {target_path}")
         extractor = BinjaFeatureExtractor()
-        targets = get_binaries(
-            target_path, progress=True, recursive=True
-        )
+        targets = get_binaries(target_path, progress=True, recursive=True)
         pbar = tqdm(targets)  # type: ignore
         for t in pbar:
             pbar.set_description(f"Hashing {t}")  # type: ignore
@@ -519,7 +563,9 @@ def _cache_snmp_binary(path: Path, version: str) -> Path:
     return cache_path / path.name
 
 
-def cache_snmp_binaries(binary_paths: list, version: str) -> Generator[Path, None, None]:
+def cache_snmp_binaries(
+    binary_paths: list, version: str
+) -> Generator[Path, None, None]:
     """Save compiled net-snmp binaries to disk"""
     for path in binary_paths:
         yield _cache_snmp_binary(path, version)
@@ -533,10 +579,14 @@ def get_latest_hashed_snmp_tag(tags: list) -> Optional[git.Tag]:
     return None
 
 
-def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/net-snmp", skip_failed_builds: bool = True):
+def compute_net_snmp_db(
+    output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/net-snmp",
+    skip_failed_builds: bool = True,
+):
     """Download the net-snmp database from GitHub and add signatures to db"""
     # TODO: get rid of lazy imports
     from hashashin.main import ApplicationFactory, HashashinApplicationContext
+
     if isinstance(output_dir, str):
         output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -552,18 +602,24 @@ def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "
     tags = [t for t in repo.tags if re.match(r"^v[5-9]\.[0-9](?:\.[0-9]+)?$", t.name)]
     last_built_tag = get_latest_hashed_snmp_tag(tags)
     lbt_index = tags.index(last_built_tag) if last_built_tag is not None else -1
-    hashApp = ApplicationFactory.getHasher(HashashinApplicationContext.from_args(["--save-to-db"]))
+    hashApp = ApplicationFactory.getHasher(
+        HashashinApplicationContext.from_args(["--save-to-db"])
+    )
     successes = []
     for tag in tags:
         # check if tag has already been built and cached
         if (NET_SNMP_BINARY_CACHE / f"net-snmp-{tag.name}").is_dir() and len(
-            cached_binaries := list(NET_SNMP_BINARY_CACHE.glob(f"net-snmp-{tag.name}/*"))
+            cached_binaries := list(
+                NET_SNMP_BINARY_CACHE.glob(f"net-snmp-{tag.name}/*")
+            )
         ) > 0:
             logger.info(f"Found cached binaries for {tag.name}")
         else:
             # skip if tag is not cached but a higher version is cached
             if skip_failed_builds and tags.index(tag) <= lbt_index:
-                logger.info(f"Skipping {tag.name} because higher version has already been built meaning this tag likely will fail building.")
+                logger.info(
+                    f"Skipping {tag.name} because higher version has already been built meaning this tag likely will fail building."
+                )
                 continue
             try:
                 build_net_snmp_from_tag(repo, tag, output_dir)
@@ -578,7 +634,9 @@ def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "
                 logger.warning(f"No binaries found after building {tag.name}")
                 continue
             cached_binaries = list(cache_snmp_binaries(binaries, tag.name))
-        logger.info(f"Computing signatures for {len(cached_binaries)} binaries in {tag.name}")
+        logger.info(
+            f"Computing signatures for {len(cached_binaries)} binaries in {tag.name}"
+        )
         signatures = list()
         for bin in cached_binaries:
             sig = hashApp.target(bin)
@@ -595,16 +653,20 @@ def compute_net_snmp_db(output_dir: Union[str, Path] = Path(__file__).parent / "
 
 def populate_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_data/"):
     logging.basicConfig(
-        format='%(asctime)s,%(msecs)03d %(levelname)-6s [%(filename)s:%(lineno)d] %(message)s',
-        datefmt='%Y-%m-%d:%H:%M:%S',
-        level='INFO',
+        format="%(asctime)s,%(msecs)03d %(levelname)-6s [%(filename)s:%(lineno)d] %(message)s",
+        datefmt="%Y-%m-%d:%H:%M:%S",
+        level="INFO",
     )
     success = compute_net_snmp_db(output_dir / "net-snmp")
     breakpoint()
 
 
 def get_closest_library_version(
-        library: str, bin_path: Union[str, Path], generate: bool = False,
+    library: str,
+    bin_path: Union[str, Path],
+    generate: bool = False,
+    triage_threshold: float = 0.2,
+    match_threshold: float = 0.5,
 ) -> Optional[str]:
     """Compute the closest library version for a given binary.
     Args:
@@ -613,60 +675,153 @@ def get_closest_library_version(
         generate (bool): Generate library signatures if not present.
             If True and the library binaries are not found in the path
             listed in LIBRARY_PATHS, an error will be thrown.
+        triage_threshold (float): Threshold for triage. If the closest
+            library version is above this threshold, None will be returned.
+        match_threshold (float): Threshold for matching. If the closest
+            library version is above this threshold, None will be returned.
 
     Returns:
         str: Closest library version or None
     """
+    if isinstance(bin_path, str):
+        bin_path = Path(bin_path)
     # Validate binary exists
-    if not Path(bin_path).exists():
+    if not bin_path.exists():
         raise ValueError(f"Invalid binary path {bin_path} does not exist")
     # Validate database contains library
     if library not in LIBRARY_PATHS:
         raise ValueError(f"Invalid library {library} not in {LIBRARY_PATHS.keys()}")
-    # Validate library binaries exist
-    library_path, library_count = LIBRARY_PATHS[library]
-    db = HashRepository()
-    ps = db.binary_repo.get_binaries_in_path(library_path)
-    if len(ps) != library_count:
-        if generate:
-            logger.info(f"Generating signatures for {library} binaries")
-            hashed_lib_bins = list(db.hashAll(library_path))
-        else:
-            raise ValueError(f"Library binaries not found in {library_path}. "
-                             f"Pass --generate to generate signatures.")
-    breakpoint()
-
-
     # Triage by filename
+    if not LIBRARY_TRIAGE[library](bin_path):
+        logger.info(f"Binary {bin_path} does not match {library} filename pattern.")
+        return None
+
+    # TODO: ok I know this is bad but I need a speedup fast so I'm pickling the BinarySignature triage
+    pickle_path = SIG_DB_PATH.parent / f"{library}_triage.pickle"
+    lib_bins = None
+    if pickle_path.exists():
+        with open(pickle_path, "rb") as f:
+            library_matrix = pickle.load(f)
+        logger.info(f"Loaded {library} signature matrix from {pickle_path}")
+    else:
+        # Validate library binaries exist
+        library_path, library_count = LIBRARY_PATHS[library]
+        db = HashRepository()
+        # TODO: This operation is very slow. Add db indexing to speed up.
+        lib_bins = db.binary_repo.get_binaries_in_path(library_path)
+        if len(lib_bins) != library_count:
+            breakpoint()
+            if generate:
+                logger.info(f"Generating signatures for {library} binaries")
+                lib_bins = list(db.hashAll(library_path))
+            else:
+                raise ValueError(
+                    f"Library binaries not found in {library_path}. "
+                    f"Pass --generate to generate signatures."
+                )
+        logger.info(f"Computing {library} signature matrix for caching.")
+        library_matrix = np.stack(
+            [
+                bs.np_signature
+                for bs in tqdm(lib_bins, disable=not logger.isEnabledFor(logging.DEBUG))
+            ]
+        )
+        with open(pickle_path, "wb") as f:
+            pickle.dump(library_matrix, f)
+
     # Compute BinarySignature
+    extractor = BinjaFeatureExtractor()
+    bs = BinarySignature.fromFile(bin_path, extractor)
+
     # Triage by BinarySignature
+    closest_sig = max(
+        library_matrix, key=lambda x: bs.minhash_similarity(bs.np_signature, x)
+    )
+    closest_value = bs.minhash_similarity(bs.np_signature, closest_sig)
+    if closest_value < triage_threshold:
+        logger.info(
+            f"Closest {library} signature is {closest_value} below threshold {triage_threshold}"
+        )
+        return None
+    logger.info(
+        f"Closest {library} signature is {closest_value}. Continuing to robust matching."
+    )
+
     # Triage by FunctionFeatures robust matching
-    # if the confidence is above threshold, return the library version
-    # else return None
-    return None
+    # TODO: get rid of pickle caching and make db operations faster
+    pickle_path = SIG_DB_PATH.parent / f"{library}_signatures.pickle"
+    np_signatures = None
+    if pickle_path.exists():
+        with open(pickle_path, "rb") as f:
+            np_signatures, lib_bins_paths = pickle.load(f)
+        logger.info(f"Loaded {library} signatures from {pickle_path}")
+    else:
+        if lib_bins is None:
+            logger.info(f"Loading {library} binaries from database")
+            library_path, library_count = LIBRARY_PATHS[library]
+            db = HashRepository()
+            lib_bins = db.binary_repo.get_binaries_in_path(library_path)
+            # TODO: test assumption that binaries are pre-computed if pickle exists
+        lib_bins_paths = [b.path for b in lib_bins]
+        logger.info("Gathering function features from library binaries...")
+        np_signatures = [b.function_matrix for b in tqdm(lib_bins, disable=not logger.isEnabledFor(logging.DEBUG))]
+        with open(pickle_path, "wb") as f:
+            pickle.dump((np_signatures, lib_bins_paths), f)
+            logger.info(f"Saved {library} signatures to {pickle_path}")
+    norms = list()
+    logger.debug("Computing norms..")
+    for sig in tqdm(np_signatures, disable=not logger.isEnabledFor(logging.DEBUG)):
+        norms.append(matrix_norms(sig, bs.function_matrix))
+    # TODO: Change this to take into account top 5 matches (weighted versioning)
+    # i.e. max(version * (1 + norm)) for all matches, needs tuned and tested
+    closest_index = np.argmax(norms)
+    if norms[closest_index] < match_threshold:
+        logger.info(
+            f"Closest {library} function features is {norms[closest_index]} below threshold {match_threshold}"
+        )
+        return None
+    logger.info(
+        f"Closest {library} function features is {norms[closest_index]}. Returning library version."
+    )
+    try:
+        return str(lib_bins_paths[closest_index].parent).split("-v")[1]
+    except Exception as e:
+        logger.error(f"Something happened: {e}")
+        return None
 
 
 def get_closest_library_version_cli() -> Optional[str]:
     """CLI entrypoint for get_closest_library_version"""
     import argparse
+
     parser = argparse.ArgumentParser(description="Match a binary against a library")
     parser.add_argument(
-        "library", type=str, choices=LIBRARY_PATHS.keys(), default="net-snmp",
-        help="Library to match against"
+        "library",
+        type=str,
+        choices=LIBRARY_PATHS.keys(),
+        default="net-snmp",
+        help="Library to match against",
     )
+    parser.add_argument("bin_path", type=str, help="Path to binary")
     parser.add_argument(
-        "bin_path", type=str, help="Path to binary"
+        "--generate",
+        action="store_true",
+        help="Generate library signatures if not present",
     )
-    parser.add_argument(
-        "--generate", action="store_true", help="Generate library signatures if not present"
-    )
-    parser.add_argument(
-        "--verbose", action="store_true", help="Verbose logging"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Verbose logging")
+    parser.add_argument("--threshold", type=float, default=0.1, help="Triage threshold")
+    parser.add_argument("--match-threshold", type=float, default=0.3, help="Match threshold")
     args = parser.parse_args()
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
-    return get_closest_library_version(args.library, args.bin_path, args.generate)
+    ret = get_closest_library_version(
+        args.library, args.bin_path, args.generate, args.threshold, args.match_threshold
+    )
+    if ret is None:
+        logger.info("No match found.")
+    else:
+        logger.info(f"Match found: {ret}")
+    return ret
 
 
 if __name__ == "__main__":

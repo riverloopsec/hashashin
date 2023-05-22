@@ -690,17 +690,12 @@ class BinarySignature:
     cached_array: Optional[np.ndarray] = None
 
     def __post_init__(self):
-        for i in range(len(self.path.parts)):
-            if Path(*self.path.parts[i:]).exists():
-                self.path = Path(*self.path.parts[i:])
-                break
-        if not self.path.exists() and not self.path.with_suffix(".bndb").exists():
-            globsearch = list(TLD.glob(f"**/{self.path}"))
-            logger.debug(f"Can't find path {self.path}, globbed:\n{globsearch}")
-            if len(globsearch) == 1 and globsearch[0].exists():
-                self.path = globsearch[0]
+        # TODO: remove this hack
+        if not self.path.exists():
+            if (TLD / "hashashin" / self.path).exists():
+                self.path = TLD / "hashashin" / self.path
             else:
-                raise FileNotFoundError(f"File {self.path} does not exist.")
+                logger.debug(f"Could not find {self.path}")
         if not self.extraction_engine:
             self.extraction_engine = self.functionFeatureList[0].extraction_engine
         if any(
@@ -708,6 +703,22 @@ class BinarySignature:
                 for f in self.functionFeatureList
         ):
             raise ValueError("All functions must have the same extraction engine.")
+
+    def resolve_path(self):
+        if (TLD / 'hashashin' / self.path).exists():
+            self.path = TLD / 'hashashin' / self.path
+            return
+        for i in range(len(self.path.parts)):
+            if Path(*self.path.parts[i:]).exists():
+                self.path = Path(*self.path.parts[i:])
+                return
+        if not self.path.exists() and not self.path.with_suffix(".bndb").exists():
+            globsearch = list(TLD.glob(f"**/{self.path}"))
+            logger.debug(f"Can't find path {self.path}, globbed:\n{globsearch}")
+            if len(globsearch) == 1 and globsearch[0].exists():
+                self.path = globsearch[0]
+            else:
+                raise FileNotFoundError(f"File {self.path} does not exist.")
 
     @classmethod
     def fromFile(cls, path: Path, extractor: FeatureExtractor) -> "BinarySignature":

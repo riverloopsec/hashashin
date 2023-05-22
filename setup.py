@@ -68,6 +68,10 @@ setuptools.setup(
             "hashashin-lib-match = hashashin.db:get_closest_library_version_cli",
         ]
     },
+    package_data={"hashashin": [
+        "net-snmp*.pickle",
+        "hashashin.db",
+    ]}
 )
 
 # TODO: This is not outputting during install
