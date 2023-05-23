@@ -33,6 +33,7 @@ from hashashin.utils import get_binaries
 from hashashin.utils import resolve_relative_path
 from hashashin.classes import BinjaFeatureExtractor
 from hashashin.metrics import matrix_norms
+from hashashin.metrics import stacked_norms
 import logging
 
 logger = logging.getLogger(__name__)
@@ -661,17 +662,29 @@ def populate_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_d
     breakpoint()
 
 
-def get_closest_library_version(
+def triage_name(
+        library: str,
+        path: Path,
+):
+    """Triage a library name to determine if it is a library or not"""
+    if path.is_dir():
+        return False
+    if path.name.startswith(library):
+        return True
+
+
+def get_closest_library_versions(
     library: str,
-    bin_path: Union[str, Path],
+    binary_path: List[Union[str, Path]],
     generate: bool = False,
-    triage_threshold: float = 0.2,
-    match_threshold: float = 0.5,
-) -> Optional[str]:
+    triage_threshold: float = 0.1,
+    match_threshold: float = 0.3,
+    remove_nones: bool = False,
+) -> Tuple[List[Optional[str]], List[Path]]:
     """Compute the closest library version for a given binary.
     Args:
         library (str): Library to match against
-        bin_path (str): Path to binary
+        binary_path (List[Union[str, Path]]): Path to binaries to match
         generate (bool): Generate library signatures if not present.
             If True and the library binaries are not found in the path
             listed in LIBRARY_PATHS, an error will be thrown.
@@ -681,20 +694,70 @@ def get_closest_library_version(
             library version is above this threshold, None will be returned.
 
     Returns:
-        str: Closest library version or None
+        tuple: Tuple of (closest_library_version or None, filename)
     """
-    if isinstance(bin_path, str):
-        bin_path = Path(bin_path)
-    # Validate binary exists
-    if not bin_path.exists():
-        raise ValueError(f"Invalid binary path {bin_path} does not exist")
-    # Validate database contains library
+    # TODO: Add back bin_path type hint, mypy is being terrifically annoying
     if library not in LIBRARY_PATHS:
         raise ValueError(f"Invalid library {library} not in {LIBRARY_PATHS.keys()}")
-    # Triage by filename
-    if not LIBRARY_TRIAGE[library](bin_path):
-        logger.info(f"Binary {bin_path} does not match {library} filename pattern.")
-        return None
+    if not isinstance(binary_path, list):
+        if isinstance(binary_path, str):
+            binary_paths = [Path(binary_path)]
+        elif isinstance(binary_path, Path):
+            binary_paths = [binary_path]
+        else:
+            raise ValueError(f"Invalid binary_path {binary_path}")
+    binary_paths = [Path(p) if isinstance(p, str) else p for p in binary_path]
+    if not all(isinstance(p, Path) for p in binary_path):
+        raise ValueError(f"Invalid binary_path {binary_path}")
+
+    # resolve directories and validate files
+    filelist = list()
+    for potential_dir in binary_paths:
+        if not potential_dir.exists():
+            raise ValueError(f"Invalid binary path {potential_dir} does not exist")
+        if potential_dir.is_file():
+            filelist.append(potential_dir)
+        elif potential_dir.is_dir():
+            filelist.extend(get_binaries(potential_dir))
+        else:
+            raise ValueError(f"Invalid binary path {potential_dir}")
+
+    # triage by name
+    filename_triage = [f for f in filelist if LIBRARY_TRIAGE[library](f)]
+
+
+    filename_triage: List[Optional[Path]] = list()
+    final_files: List[Path] = list()
+    bin_path: Optional[Path]  # mypy satisfier even though it's a lie
+    for bin_path in binary_paths:
+        assert isinstance(bin_path, Path)  # mypy satisfier, should never hit
+        if not bin_path.exists():
+            raise ValueError(f"Invalid binary path {bin_path} does not exist")
+        if bin_path.is_dir():
+            for pp in get_binaries(bin_path):
+                if not LIBRARY_TRIAGE[library](pp):
+                    logger.info(
+                        f"Binary {pp} does not match {library} filename pattern."
+                    )
+                    filename_triage.append(None)
+                    final_files.append(pp)
+                    continue
+                filename_triage.append(pp)
+                final_files.append(pp)
+        elif bin_path.is_file():
+            if not LIBRARY_TRIAGE[library](bin_path):
+                logger.info(f"Binary {bin_path} does not match {library} filename pattern.")
+                filename_triage.append(None)
+                final_files.append(bin_path)
+            filename_triage.append(bin_path)
+            final_files.append(bin_path)
+        else:
+            raise ValueError(f"Invalid binary path {bin_path} is not a file or directory")
+
+    if all(name is None for name in filename_triage):
+        logger.info(f"No binaries found matching {library} filename pattern")
+        breakpoint()
+        return final_files, [None] * len(final_files)
 
     # TODO: ok I know this is bad but I need a speedup fast so I'm pickling the BinarySignature triage
     pickle_path = SIG_DB_PATH.parent / f"{library}_triage.pickle"
@@ -729,23 +792,35 @@ def get_closest_library_version(
         with open(pickle_path, "wb") as f:
             pickle.dump(library_matrix, f)
 
-    # Compute BinarySignature
-    extractor = BinjaFeatureExtractor()
-    bs = BinarySignature.fromFile(bin_path, extractor)
+    extractor = BinjaFeatureExtractor() if any(b is not None for b in filename_triage) else None
+    signature_triage: List[Optional[BinarySignature]] = list()
+    for bin_path in filename_triage:
+        if bin_path is None:
+            signature_triage.append(None)
+            continue
+        # Compute BinarySignature
+        assert isinstance(extractor, BinjaFeatureExtractor)  # mypy satisfier, should never hit
+        bs = BinarySignature.fromFile(bin_path, extractor)
 
-    # Triage by BinarySignature
-    closest_sig = max(
-        library_matrix, key=lambda x: bs.minhash_similarity(bs.np_signature, x)
-    )
-    closest_value = bs.minhash_similarity(bs.np_signature, closest_sig)
-    if closest_value < triage_threshold:
-        logger.info(
-            f"Closest {library} signature is {closest_value} below threshold {triage_threshold}"
+        # Triage by BinarySignature
+        closest_sig = max(
+            library_matrix, key=lambda x: bs.minhash_similarity(bs.np_signature, x)
         )
-        return None
-    logger.info(
-        f"Closest {library} signature is {closest_value}. Continuing to robust matching."
-    )
+        closest_value = bs.minhash_similarity(bs.np_signature, closest_sig)
+        if closest_value < triage_threshold:
+            logger.info(
+                f"Closest {library} signature to {bin_path} is {closest_value} below threshold {triage_threshold}. Skipping."
+            )
+            signature_triage.append(None)
+            continue
+        logger.info(
+            f"Closest {library} signature to {bin_path} is {closest_value}. Continuing to robust matching."
+        )
+        signature_triage.append(bs)
+
+    if all(s is None for s in signature_triage):
+        logger.info(f"No binaries passed triage for {library}.")
+        return [None] * len(binary_paths)
 
     # Triage by FunctionFeatures robust matching
     # TODO: get rid of pickle caching and make db operations faster
@@ -768,29 +843,62 @@ def get_closest_library_version(
         with open(pickle_path, "wb") as f:
             pickle.dump((np_signatures, lib_bins_paths), f)
             logger.info(f"Saved {library} signatures to {pickle_path}")
-    norms = list()
-    logger.debug("Computing norms..")
-    for sig in tqdm(np_signatures, disable=not logger.isEnabledFor(logging.DEBUG)):
-        norms.append(matrix_norms(sig, bs.function_matrix))
-    # TODO: Change this to take into account top 5 matches (weighted versioning)
-    # i.e. max(version * (1 + norm)) for all matches, needs tuned and tested
-    closest_index = np.argmax(norms)
-    if norms[closest_index] < match_threshold:
+
+    final_results: List[Optional[str]] = list()
+    for sig in tqdm(signature_triage, disable=not logger.isEnabledFor(logging.INFO)):
+        if sig is None:
+            final_results.append(None)
+            continue
+        logger.debug("Computing norms...")
+        norms = stacked_norms(np_signatures, sig.function_matrix)
+        if max(norms) < match_threshold:
+            logger.info(
+                f"Closest {library} function features is {max(norms)} below threshold {match_threshold}"
+            )
+            final_results.append(None)
+            continue
         logger.info(
-            f"Closest {library} function features is {norms[closest_index]} below threshold {match_threshold}"
+            f"Closest {library} function features is {max(norms)}. Returning library version."
         )
-        return None
-    logger.info(
-        f"Closest {library} function features is {norms[closest_index]}. Returning library version."
-    )
-    try:
-        return str(lib_bins_paths[closest_index].parent).split("-v")[1]
-    except Exception as e:
-        logger.error(f"Something happened: {e}")
-        return None
+        final_results.append(
+            str(lib_bins_paths[np.argmax(norms)].parent).split("-v")[1]
+        )
+    return final_results
 
 
-def get_closest_library_version_cli() -> Optional[str]:
+def get_closest_library_version(
+    library: str,
+    binary_path: Union[Path, str],
+    generate: bool = False,
+    triage_threshold: float = 0.1,
+    match_threshold: float = 0.3,
+) -> Optional[str]:
+    """Compute the closest library version for a given binary.
+    Args:
+        library (str): Library to match against
+        binary_path (Union[Path, str]): Path to binary to match
+        generate (bool): Generate library signatures if not present.
+            If True and the library binaries are not found in the path
+            listed in LIBRARY_PATHS, an error will be thrown.
+        triage_threshold (float): Threshold for triage. If the closest
+            library version is above this threshold, None will be returned.
+        match_threshold (float): Threshold for matching. If the closest
+            library version is above this threshold, None will be returned.
+
+    Returns:
+        str: Closest library version, or None if no version is close enough.
+    """
+    return get_closest_library_versions(
+        library,
+        [binary_path],
+        generate=generate,
+        triage_threshold=triage_threshold,
+        match_threshold=match_threshold,
+        remove_nones=False,
+    )[0][0]
+
+
+def get_closest_library_version_cli() -> List[Optional[str]]:
     """CLI entrypoint for get_closest_library_version"""
     import argparse
 
@@ -802,7 +910,7 @@ def get_closest_library_version_cli() -> Optional[str]:
         default="net-snmp",
         help="Library to match against",
     )
-    parser.add_argument("bin_path", type=str, help="Path to binary")
+    parser.add_argument("bin_path", type=str, nargs="+", help="Path(s) to binary")
     parser.add_argument(
         "--generate",
         action="store_true",
@@ -817,10 +925,12 @@ def get_closest_library_version_cli() -> Optional[str]:
     ret = get_closest_library_version(
         args.library, args.bin_path, args.generate, args.threshold, args.match_threshold
     )
-    if ret is None:
+    if all(r is None for r in ret):
         logger.info("No match found.")
     else:
-        logger.info(f"Match found: {ret}")
+        for r in ret:
+            if r is not None:
+                logger.info(f"Match found: {r}")
     return ret
 
 
