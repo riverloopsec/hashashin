@@ -33,7 +33,9 @@ INFO:hashashin.db:7a738681-aec5-4ff0-9755-9e8d7bafadce/7da5e3d9-3aaf-4580-ab1a-1
 ```
 
 ### Docker
-Using the provided [Dockerfile](./Dockerfile) you can build an image for net-snmp matching with 
+You need to have `binaryninja-api/BinaryNinja-headless.zip` to build the docker image. This can be done by checking out the [binaryninja-api](./binaryninja-api) submodule and running [scripts/download_headless.py](https://github.com/Vector35/binaryninja-api/blob/dev/scripts/download_headless.py) to download the headless zip file. This requires a valid licence to be placed in `~/.binaryninja/license.dat` on linux. Once the zip has been generated, place it in `binaryninja-api/BinaryNinja-headless.zip`.
+
+Using the provided [Dockerfile](./Dockerfile) you can now build an image for net-snmp matching with 
 
 ```docker build -f Dockerfile .```
 
