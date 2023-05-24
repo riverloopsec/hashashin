@@ -763,8 +763,8 @@ def get_closest_library_versions(
         else:
             raise ValueError(f"Invalid binary_path {binary_path}")
     binary_paths = [Path(p) if isinstance(p, str) else p for p in binary_path]
-    if not all(isinstance(p, Path) for p in binary_path):
-        raise ValueError(f"Invalid binary_path {binary_path}")
+    if not all(isinstance(p, Path) for p in binary_paths):
+        raise ValueError(f"Invalid binary_paths {binary_paths}")
 
     # resolve directories and validate files
     filelist = list()
@@ -811,7 +811,7 @@ def get_closest_library_versions(
 
     # Triage by FunctionFeatures robust matching
     np_signatures, lib_bins_paths = _load_library_np_signatures(library, lib_bins)
-    feature_triage: List[Tuple[str, BinarySignature]] = list()
+    feature_triage: List[Tuple[str, Path]] = list()
     for sig in tqdm(signature_triage, disable=not logger.isEnabledFor(logging.INFO)):
         logger.debug(f"Computing norms for {sig.path}...")
         norms = stacked_norms(np_signatures, sig.function_matrix)
@@ -820,19 +820,28 @@ def get_closest_library_versions(
                 f"Closest {library} function features is {max(norms)} below threshold {match_threshold}"
             )
             continue
+        version = str(lib_bins_paths[np.argmax(norms)].parent).split("-v")[1]
         logger.info(
-            f"Closest {library} function features is {max(norms)}. Returning library version."
+            f"Closest {library} function features is {max(norms)} to v{version}."
         )
         feature_triage.append(
-            (str(lib_bins_paths[np.argmax(norms)].parent).split("-v")[1], sig)
+            (version, sig.path)
         )
     if len(feature_triage) == 0:
         logger.info(f"No binaries passed robust matching for {library}.")
         return [None] * len(filelist), filelist if not remove_nones else []
 
     # Return closest library version
-    if not remove_nones:
-        return 
+    if remove_nones:
+        return [v for v, _ in feature_triage], [p for _, p in feature_triage]
+
+    # Add back nones to match up with filelist
+    versions, paths = [None] * len(filelist), [None] * len(filelist)
+    for version, path in feature_triage:
+        idx: int = int(filelist.index(path))
+        versions[idx] = version  # type: ignore
+        paths[idx] = path  # type: ignore
+    return versions, paths  # type: ignore
 
 
 def get_closest_library_version(
@@ -873,7 +882,7 @@ def get_closest_library_version(
     return ret[0][0]
 
 
-def get_closest_library_version_cli() -> List[Optional[str]]:
+def get_closest_library_version_cli() -> Tuple[List[Optional[str]], List[Path]]:
     """CLI entrypoint for get_closest_library_version"""
     import argparse
 
@@ -896,7 +905,10 @@ def get_closest_library_version_cli() -> List[Optional[str]]:
     parser.add_argument("--match-threshold", type=float, default=0.3, help="Match threshold")
     args = parser.parse_args()
     if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+    logging.basicConfig(level=level)
     ret = get_closest_library_versions(
         args.library, args.bin_path, args.generate, args.threshold, args.match_threshold
     )
