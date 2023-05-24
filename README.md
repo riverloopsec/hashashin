@@ -37,7 +37,7 @@ Using the provided [Dockerfile](./Dockerfile) you can build an image for net-snm
 
 ```docker build -f Dockerfile .```
 
-You must have a valid license `license.dat` in the TLD before building and it is recommended to generate `net-snmp_{signatures,triage}.pickle` before building as well. 
+You must have a valid license `headless_license.dat` in the TLD before building and it is recommended to generate `net-snmp_{signatures,triage}.pickle` before building as well. 
 
 ### Demo Usage
 ![](demo.gif)
