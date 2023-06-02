@@ -882,7 +882,7 @@ def get_closest_library_version(
     return ret[0][0]
 
 
-def get_closest_library_version_cli() -> Tuple[List[Optional[str]], List[Path]]:
+def get_closest_library_version_cli() -> Union[Tuple[List[Optional[str]], List[Path]],Optional[str]]:
     """CLI entrypoint for get_closest_library_version"""
     import argparse
 
@@ -909,16 +909,18 @@ def get_closest_library_version_cli() -> Tuple[List[Optional[str]], List[Path]]:
     else:
         level = logging.INFO
     logging.basicConfig(level=level)
-    ret = get_closest_library_versions(
+    versions, paths = get_closest_library_versions(
         args.library, args.bin_path, args.generate, args.threshold, args.match_threshold
     )
-    if all(r is None for r in ret):
-        logger.info("No match found.")
+    if all(v is None for v in versions):
+        logger.info("No matches found.")
     else:
-        for r in ret:
-            if r is not None:
-                logger.info(f"Match found: {r}")
-    return ret
+        for v, p in zip(versions, paths):
+            if v is not None:
+                logger.info(f"{p}: {v}")
+    if len(paths) == 1:
+        return versions[0]
+    return versions, paths
 
 
 if __name__ == "__main__":

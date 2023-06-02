@@ -866,3 +866,7 @@ class BinarySignature:
         if isinstance(other, BinarySigModel):
             return bytes([a ^ b for a, b in zip(self.signature, other.sig)]).count(b'\x00') / len(self.signature)
         raise TypeError(f"Cannot xor BinarySigModel with {type(other)}")
+
+    # print the path and signature
+    def __repr__(self):
+        return f"<BinarySignature {self.path} {self.signature}>"
