@@ -1,0 +1,9 @@
+**/binary_data
+*.tar.gz
+*.bak
+*.db
+*.ipynb
+
+# Exceptions
+!**/hashashin.db
+!**/net-snmp*.pickle
