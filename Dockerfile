@@ -14,7 +14,7 @@ RUN python3 -m pip install requests
 
 RUN mkdir /root/.binaryninja
 # TODO: securely add license to /root/.binaryninja/license.dat
-COPY pilot_2023_headless_license.dat /root/.binaryninja/license.dat
+COPY headless_license.dat /root/.binaryninja/license.dat
 
 WORKDIR /
 COPY ./binaryninja-api/BinaryNinja-headless.zip .
