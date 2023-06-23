@@ -40,7 +40,8 @@ setuptools.setup(
     author="Jonathan Prokos",
     author_email="jonathan.prokos@twosixtech.com",
     description="Binary Fingerprint Library",
-    packages=setuptools.find_packages(),
+    packages=["hashashin"],
+    package_dir={"hashashin": "hashashin"},
     install_requires=[
         "tqdm",
         "numpy",
