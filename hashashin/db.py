@@ -146,6 +146,9 @@ class FunctionFeatureRepository:
     ) -> Tuple[np.array, List[FunctionFeatModel]]:
         raise NotImplementedError
 
+    def match(self, fn_feats: FunctionFeatures, topn: int = 10) -> List[FunctionFeatModel]:
+        raise NotImplementedError
+
 
 @dataclass
 class SQLAlchemyConfig(RepositoryConfig):
@@ -246,6 +249,20 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
 
     def drop(self):
         ORM_BASE.metadata.drop_all(self.engine)
+
+    def match(self, fn_feats: FunctionFeatures, topn: int = 10) -> List[FunctionFeatModel]:
+        with self.session() as session:
+            features = session.query(FunctionFeatModel).all()
+            logger.info(f"Matching {len(features)} features against {fn_feats}")
+            features = [(x, x ^ fn_feats) for x in tqdm(features, desc=f"Computing similarity scores...")]
+            logger.info(f"Found {len(features)} features above threshold")
+            sorted_features = sorted(
+                features,
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            sorted_features = [x[0] for x in sorted_features[:topn]]
+            return sorted_features
 
 
 class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):

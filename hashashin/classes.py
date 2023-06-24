@@ -207,7 +207,7 @@ class FeatureExtractor:
         for subclass in FeatureExtractor.__subclasses__():
             if subclass.name == name:
                 return subclass()
-        raise ValueError(f"FeatureExtractor {name} not found")
+        raise ValueError(f"FeatureExtractor {name} not found, must be one of {cls.get_extractor_names()}")
 
     class NotABinaryError(Exception):
         pass
