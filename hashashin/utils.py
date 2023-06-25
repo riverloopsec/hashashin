@@ -1,5 +1,4 @@
 from __future__ import annotations
-import glob
 import json
 import logging
 import os
@@ -8,73 +7,12 @@ from typing import Union, Iterable, Optional
 import subprocess
 import git
 
-import binaryninja  # type: ignore
 import magic
 import numpy as np
 import numpy.typing as npt
 from tqdm import tqdm  # type: ignore
-import argparse
 
 logger = logging.getLogger(__name__)
-
-
-def get_parser():
-    parser = argparse.ArgumentParser()
-    db_group = parser.add_argument_group("Database operations")
-    db_group.add_argument(
-        "--status", "-db", action="store_true", help="Print database status"
-    )
-    db_group.add_argument(
-        "--drop",
-        type=str,
-        default=None,
-        help="D" + 'rop database tables. Accepts "all" or binary path',
-    )
-    db_group.add_argument(
-        "--summary", action="store_true", help="Print database summary"
-    )
-    app_group = parser.add_argument_group("Application operations")
-    app_group.add_argument(
-        "--target", "-b", type=str, help="Target binary or directory"
-    )
-    app_group.add_argument(
-        "--function", "-f", type=str, help="Target function name or address"
-    )
-    app_group.add_argument(
-        "--save", "-s", action="store_true", help="Save results to database"
-    )
-    app_group.add_argument(
-        "--threshold", "-r", type=float, default=0.5, help="Signature match threshold"
-    )
-    app_group.add_argument(
-        "--progress", "-p", action="store_true", help="Show progress bar"
-    )
-    demo_group = parser.add_argument_group("Demo operations")
-    demo_group.add_argument(
-        "--fast-match",
-        type=str,
-        nargs="+",
-        metavar="BINARY_PATH",
-        help="Fast match a binary against the database",
-    )
-    demo_group.add_argument(
-        "--robust-match",
-        type=str,
-        nargs="+",
-        metavar="BINARY_PATH",
-        help="Match a given binary against database",
-    )
-    demo_group.add_argument(
-        "--matches", type=int, metavar="N", help="Number of matches to return"
-    )
-    demo_group.add_argument(
-        "--stdlib", action="store_true", help="Standard library matching"
-    )
-    demo_group.add_argument("--snmp", action="store_true", help="net-snmp matching")
-    parser.add_argument(
-        "--debug", "-d", action="store_true", help="Enable debug logging"
-    )
-    return parser
 
 
 def get_binaries(

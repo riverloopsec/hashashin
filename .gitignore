@@ -122,3 +122,6 @@ tests/
 .DS_Store
 /hashashin/testing.py
 /hashashin/pycrunch-recordings
+*.egg-info/
+__pycache__/
+build/

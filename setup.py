@@ -62,7 +62,7 @@ setuptools.setup(
     python_requires=">=3.8",
     entry_points={
         "console_scripts": [
-            "hashashin = hashashin.main:main",
+            "hashashin = hashashin.cli:cli",
             "flowslicer = flowslicer.flowslicer:Main",
             "populate-db = hashashin.db:populate_db",
             "safedocs-demo = demos.safedocs_05_16_demo:safedocs_demo",

@@ -117,6 +117,9 @@ class BinarySignatureRepository:
             if subclass.__name__ == name:
                 return subclass()
         raise ValueError(f"Unknown repository type {name}")
+    
+    def summary(self):
+        raise NotImplementedError
 
     def __len__(self) -> int:
         raise NotImplementedError
