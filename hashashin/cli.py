@@ -114,27 +114,39 @@ def validate_args(args, parser=None) -> None:
 
 def _db_handler(args: argparse.Namespace) -> bool:
     logger.debug(
-        "DB args: " + str(list(_get_parser_group_options(get_parser(), args))[-3])
+        "DB args: "
+        + str(
+            list(_get_parser_group_options(get_parser(), args))[
+                PARSER_OPTIONS.index(_db_parser) - 1
+            ]
+        )
     )
 
     if args.summary is not None:
         logger.debug("Printing database summary")
         num_binaries, num_functions = APP.repo.binary_repo.summary(args.summary)
-        logger.info(f"Binaries: {num_binaries}")
-        logger.info(f"Functions: {num_functions}")
-        return True
+        msg = f"*{args.summary}*" if args.summary else "all"
+        logger.info(f"Summary for {msg} binary paths:")
+        logger.info(f"\tBinaries: {num_binaries}")
+        logger.info(f"\tFunctions: {num_functions}")
+        return False  # Continue execution if summary is printed
     if args.drop is not None:
         if not input(f"Confirm drop {args.drop}? [y/N] ").lower().startswith("y"):
             logger.info("Aborting drop")
             return True
         APP.repo.drop(args.drop)
-        return True
+        return True  # Exit after drop
     return False
 
 
 def _demo_handler(args: argparse.Namespace) -> bool:
     logger.debug(
-        "Demo args: " + str(list(_get_parser_group_options(get_parser(), args))[-2])
+        "Demo args: "
+        + str(
+            list(_get_parser_group_options(get_parser(), args))[
+                PARSER_OPTIONS.index(_demo_parser) - 1
+            ]
+        )
     )
 
     if args.fast_match is not None:
@@ -189,7 +201,12 @@ def _demo_handler(args: argparse.Namespace) -> bool:
 
 def _app_handler(args: argparse.Namespace) -> bool:
     logger.debug(
-        "App args: " + str(list(_get_parser_group_options(get_parser(), args))[-1])
+        "App args: "
+        + str(
+            list(_get_parser_group_options(get_parser(), args))[
+                PARSER_OPTIONS.index(_app_parser) - 1
+            ]
+        )
     )
 
     hash_binaries = list()
