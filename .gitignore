@@ -125,3 +125,4 @@ tests/
 *.egg-info/
 __pycache__/
 build/
+*.db

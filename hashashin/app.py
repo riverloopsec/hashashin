@@ -1,4 +1,3 @@
-from hashashin.utils import get_parser
 from hashashin.db import HashRepository
 from hashashin.db import RepositoryType
 from hashashin.classes import FeatureExtractor
@@ -11,11 +10,15 @@ from pathlib import Path
 from typing import Union
 from collections import Counter
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 class HashApp:
     def __init__(self,
                  repo_type: RepositoryType = RepositoryType.SQLALCHEMY,
                  name: str = "binja"):
+        logger.debug("Making HashApp")
         self.repo = HashRepository(repo_type=repo_type)
         self.extractor = FeatureExtractor.from_name(name)
 
