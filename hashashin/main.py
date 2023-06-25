@@ -162,7 +162,6 @@ def main(args: Optional[argparse.Namespace] = None):
 
         return
 
-
     if args.stdlib:
         logger.info("Computing stdlib signatures...")
         # Get stdlib binary

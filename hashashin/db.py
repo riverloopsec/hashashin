@@ -117,7 +117,7 @@ class BinarySignatureRepository:
             if subclass.__name__ == name:
                 return subclass()
         raise ValueError(f"Unknown repository type {name}")
-    
+
     def summary(self):
         raise NotImplementedError
 
@@ -149,7 +149,9 @@ class FunctionFeatureRepository:
     ) -> Tuple[np.array, List[FunctionFeatModel]]:
         raise NotImplementedError
 
-    def match(self, fn_feats: FunctionFeatures, topn: int = 10) -> List[FunctionFeatModel]:
+    def match(
+        self, fn_feats: FunctionFeatures, topn: int = 10
+    ) -> List[FunctionFeatModel]:
         raise NotImplementedError
 
 
@@ -253,11 +255,16 @@ class SQLAlchemyFunctionFeatureRepository(FunctionFeatureRepository):
     def drop(self):
         ORM_BASE.metadata.drop_all(self.engine)
 
-    def match(self, fn_feats: FunctionFeatures, topn: int = 10) -> List[FunctionFeatModel]:
+    def match(
+        self, fn_feats: FunctionFeatures, topn: int = 10
+    ) -> List[FunctionFeatModel]:
         with self.session() as session:
             features = session.query(FunctionFeatModel).all()
             logger.info(f"Matching {len(features)} features against {fn_feats}")
-            features = [(x, x ^ fn_feats) for x in tqdm(features, desc=f"Computing similarity scores...")]
+            features = [
+                (x, x ^ fn_feats)
+                for x in tqdm(features, desc=f"Computing similarity scores...")
+            ]
             logger.info(f"Found {len(features)} features above threshold")
             sorted_features = sorted(
                 features,
@@ -421,25 +428,17 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
                 cached.delete()
                 session.commit()
 
-    def summary(self):
-        """Print summary of database.
-        Print the number of binaries and functions in each path relative to binary_data directory"""
+    def summary(self, path_filter: str = ""):
+        """Get summary of database.
+        Return the number of binaries and functions in the database."""
         with self.session() as session:
-            paths = [
-                resolve_relative_path(x.path, BINARY_DATA_SUMMARY_PATH)
-                for x in tqdm(
-                    session.query(BinarySigModel).all(),
-                    desc="Resolving paths",
+            return (
+                bins := session.query(BinarySigModel).filter(
+                    BinarySigModel.path.like(f"%{path_filter}%")
                 )
-            ]
-            paths = [x.relative_to(BINARY_DATA_SUMMARY_PATH) for x in paths]
-            for path in paths:
-                print(f"{path}: {paths.count(path)}")
-                # get number of functions relative to path
-                functions = session.query(FunctionFeatModel).filter(
-                    FunctionFeatModel.path.like(f"%{path}%")
-                )
-                print(f"  Functions: {functions.count()}")
+            ).count(), session.query(FunctionFeatModel).filter(
+                FunctionFeatModel.bin_id.in_({x.id for x in bins})
+            ).count()
 
     def get_binaries_in_path(self, path: Path):
         """Get all BinarySignatures with a path that is a subpath of the given path"""
@@ -683,8 +682,8 @@ def populate_db(output_dir: Union[str, Path] = Path(__file__).parent / "binary_d
 
 
 def _load_library_matrix(
-        library: str,
-        generate: bool = False,
+    library: str,
+    generate: bool = False,
 ):
     # TODO: ok I know this is bad but I need a speedup fast so I'm pickling the BinarySignature triage
     pickle_path = SIG_DB_PATH.parent / f"{library}_triage.pickle"
@@ -721,10 +720,7 @@ def _load_library_matrix(
     return library_matrix, lib_bins
 
 
-def _load_library_np_signatures(
-        library: str,
-        lib_bins
-):
+def _load_library_np_signatures(library: str, lib_bins):
     # TODO: get rid of pickle caching and make db operations faster
     pickle_path = SIG_DB_PATH.parent / f"{library}_signatures.pickle"
     np_signatures = None
@@ -741,7 +737,10 @@ def _load_library_np_signatures(
             # TODO: test assumption that binaries are pre-computed if pickle exists
         lib_bins_paths = [b.path for b in lib_bins]
         logger.info("Gathering function features from library binaries...")
-        np_signatures = [b.function_matrix for b in tqdm(lib_bins, disable=not logger.isEnabledFor(logging.DEBUG))]
+        np_signatures = [
+            b.function_matrix
+            for b in tqdm(lib_bins, disable=not logger.isEnabledFor(logging.DEBUG))
+        ]
         with open(pickle_path, "wb") as f:
             pickle.dump((np_signatures, lib_bins_paths), f)
             logger.info(f"Saved {library} signatures to {pickle_path}")
@@ -844,9 +843,7 @@ def get_closest_library_versions(
         logger.info(
             f"Closest {library} function features is {max(norms)} to v{version}."
         )
-        feature_triage.append(
-            (version, sig.path)
-        )
+        feature_triage.append((version, sig.path))
     if len(feature_triage) == 0:
         logger.info(f"No binaries passed robust matching for {library}.")
         return [None] * len(filelist), filelist if not remove_nones else []
@@ -902,7 +899,9 @@ def get_closest_library_version(
     return ret[0][0]
 
 
-def get_closest_library_version_cli() -> Union[Tuple[List[Optional[str]], List[Path]],Optional[str]]:
+def get_closest_library_version_cli() -> Union[
+    Tuple[List[Optional[str]], List[Path]], Optional[str]
+]:
     """CLI entrypoint for get_closest_library_version"""
     import argparse
 
@@ -922,7 +921,9 @@ def get_closest_library_version_cli() -> Union[Tuple[List[Optional[str]], List[P
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
     parser.add_argument("--threshold", type=float, default=0.1, help="Triage threshold")
-    parser.add_argument("--match-threshold", type=float, default=0.3, help="Match threshold")
+    parser.add_argument(
+        "--match-threshold", type=float, default=0.3, help="Match threshold"
+    )
     args = parser.parse_args()
     if args.verbose:
         level = logging.DEBUG

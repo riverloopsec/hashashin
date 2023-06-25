@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+
 # import seaborn as sns  # type: ignore
 from sklearn.preprocessing import normalize
 from tqdm import tqdm
@@ -129,7 +130,9 @@ def generate_matrix_norms(base_path, hashApp, paths, rescale=None):
         hash_paths(base_path, hashApp, paths),
         key=lambda s: s.path.relative_to(Path(".").parent / "binary_data"),
     )
-    binaries = list([s.path.relative_to(Path(".").parent / "binary_data") for s in signatures])
+    binaries = list(
+        [s.path.relative_to(Path(".").parent / "binary_data") for s in signatures]
+    )
     logger.info("Converting signatures to function matrices..")
     np_signatures = [b.function_matrix for b in signatures]
     norms = np.zeros((len(binaries), len(binaries)))

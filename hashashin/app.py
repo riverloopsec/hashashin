@@ -14,10 +14,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class HashApp:
-    def __init__(self,
-                 repo_type: RepositoryType = RepositoryType.SQLALCHEMY,
-                 name: str = "binja"):
+    def __init__(
+        self, repo_type: RepositoryType = RepositoryType.SQLALCHEMY, name: str = "binja"
+    ):
         logger.debug("Making HashApp")
         self.repo = HashRepository(repo_type=repo_type)
         self.extractor = FeatureExtractor.from_name(name)
@@ -36,15 +37,14 @@ class HashApp:
         else:
             raise ValueError(f"Invalid path: {binary_path}")
 
-    def save(self, binary_path: Union[Path, str]):
-        for bs in [self.hash(p) for p in get_binaries(binary_path)]:
-            self.repo.save(bs)
+    def save(self, binaries: list[BinarySignature]):
+        self.repo.save(binaries)
 
     # def _top_n(self, fn: FunctionFeatures, n: int = 5):
     #     return self.repo.function_repo.match(fn, n)
 
-    def match(self, binary_path: Union[Path, str], n: int = 10):
-        for bs in self.hash(binary_path):
+    def match(self, binaries: list[BinarySignature], n: int = 10):
+        for bs in binaries:
             for fn in bs.functionFeatureList:
                 matches = self.repo.function_repo.match(fn, n)
                 bin_matches = [m.binary for m in matches]

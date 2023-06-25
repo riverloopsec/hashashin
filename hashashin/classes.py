@@ -55,7 +55,9 @@ class BinarySigModel(ORM_BASE):
     hash = Column(LargeBinary, unique=True, index=True)
     path = Column(String, index=True)
     sig = Column(LargeBinary, nullable=True)
-    functions: RelationshipProperty = relationship("FunctionFeatModel", cascade="all, delete-orphan")
+    functions: RelationshipProperty = relationship(
+        "FunctionFeatModel", cascade="all, delete-orphan"
+    )
     extraction_engine = Column(String)
 
     @classmethod
@@ -76,9 +78,9 @@ class BinarySigModel(ORM_BASE):
         if not isinstance(other, BinarySigModel):
             return False
         return (
-                self.hash == other.hash
-                and self.sig == other.sig
-                and self.extraction_engine == other.extraction_engine
+            self.hash == other.hash
+            and self.sig == other.sig
+            and self.extraction_engine == other.extraction_engine
         )
 
     def __xor__(self, other):
@@ -120,13 +122,30 @@ class FunctionFeatModel(ORM_BASE):
 
     def __xor__(self, other):
         if isinstance(other, bytes):
-            return bytes([a ^ b for a, b in zip(zlib.decompress(self.sig), zlib.decompress(other))]).count(b'\x00')
+            return bytes(
+                [
+                    a ^ b
+                    for a, b in zip(zlib.decompress(self.sig), zlib.decompress(other))
+                ]
+            ).count(b"\x00")
         if isinstance(other, FunctionFeatures):
-            return bytes([a ^ b for a, b in zip(zlib.decompress(self.sig), zlib.decompress(other.signature))]).count(
-                b'\x00') / (FunctionFeatures.length * 4)
+            return bytes(
+                [
+                    a ^ b
+                    for a, b in zip(
+                        zlib.decompress(self.sig), zlib.decompress(other.signature)
+                    )
+                ]
+            ).count(b"\x00") / (FunctionFeatures.length * 4)
         if isinstance(other, FunctionFeatModel):
-            return bytes([a ^ b for a, b in zip(zlib.decompress(self.sig), zlib.decompress(other.sig))]).count(
-                b'\x00') / (FunctionFeatures.length * 4)
+            return bytes(
+                [
+                    a ^ b
+                    for a, b in zip(
+                        zlib.decompress(self.sig), zlib.decompress(other.sig)
+                    )
+                ]
+            ).count(b"\x00") / (FunctionFeatures.length * 4)
         raise TypeError(f"Cannot xor FunctionFeatModel with {type(other)}")
 
 
@@ -176,15 +195,19 @@ class FeatureExtractor:
     def extract(self, func: AbstractFunction) -> "FunctionFeatures":
         raise NotImplementedError
 
-    def extract_from_bv(self, bv: BinaryView, progress_kwargs=None) -> "BinarySignature":
-        raise NotImplementedError
-
-    def extract_from_file(
-            self, path: Path, progress_kwargs: Optional[dict] = None
+    def extract_from_bv(
+        self, bv: BinaryView, progress_kwargs=None
     ) -> "BinarySignature":
         raise NotImplementedError
 
-    def extract_function(self, path_or_bv: Union[Path, BinaryView], function: Union[str, int]) -> "FunctionFeatures":
+    def extract_from_file(
+        self, path: Path, progress_kwargs: Optional[dict] = None
+    ) -> "BinarySignature":
+        raise NotImplementedError
+
+    def extract_function(
+        self, path_or_bv: Union[Path, BinaryView], function: Union[str, int]
+    ) -> "FunctionFeatures":
         raise NotImplementedError
 
     def __repr__(self):
@@ -197,17 +220,19 @@ class FeatureExtractor:
 
     def get_abstract_function(self, path: Path, name: str) -> AbstractFunction:
         raise NotImplementedError
-    
+
     @staticmethod
     def get_extractor_names() -> List[str]:
         return [subclass.name for subclass in FeatureExtractor.__subclasses__()]
-    
+
     @classmethod
     def from_name(cls, name: str) -> "FeatureExtractor":
         for subclass in FeatureExtractor.__subclasses__():
             if subclass.name == name:
                 return subclass()
-        raise ValueError(f"FeatureExtractor {name} not found, must be one of {cls.get_extractor_names()}")
+        raise ValueError(
+            f"FeatureExtractor {name} not found, must be one of {cls.get_extractor_names()}"
+        )
 
     class NotABinaryError(Exception):
         pass
@@ -249,7 +274,9 @@ class BinjaFeatureExtractor(FeatureExtractor):
             func = function.function
         return self._extract(func)
 
-    def _extract_functions(self, bv: BinaryView, progress_kwargs: Dict) -> Iterable["FunctionFeatures"]:
+    def _extract_functions(
+        self, bv: BinaryView, progress_kwargs: Dict
+    ) -> Iterable["FunctionFeatures"]:
         disable = progress_kwargs.pop("disable", False)
         pbar = tqdm(bv.functions, disable=disable)  # type: ignore
         for func in pbar:
@@ -261,7 +288,9 @@ class BinjaFeatureExtractor(FeatureExtractor):
                 pbar.set_description(f"Extracting features from {func}")  # type: ignore
             yield self._extract(func)
 
-    def extract_from_bv(self, bv: BinaryView, progress_kwargs: Optional[Dict] = None) -> "BinarySignature":
+    def extract_from_bv(
+        self, bv: BinaryView, progress_kwargs: Optional[Dict] = None
+    ) -> "BinarySignature":
         """
         Extracts features from all functions in a binary.
         :param bv: binary view
@@ -305,11 +334,14 @@ class BinjaFeatureExtractor(FeatureExtractor):
             bv.update_analysis()
             start = time.time()
             while (
-                    time.time() - start < timeout and
-                    bv.analysis_progress.state != enums.AnalysisState.IdleState
+                time.time() - start < timeout
+                and bv.analysis_progress.state != enums.AnalysisState.IdleState
             ):
                 if logger.getEffectiveLevel() <= logging.DEBUG:
-                    print(f"{(str(bv.analysis_progress) + '...').ljust(40)}\t{time.time() - start:.1f}/{timeout}s", end="\r")
+                    print(
+                        f"{(str(bv.analysis_progress) + '...').ljust(40)}\t{time.time() - start:.1f}/{timeout}s",
+                        end="\r",
+                    )
                 time.sleep(0.1)
             if logger.getEffectiveLevel() <= logging.DEBUG:
                 print()
@@ -333,15 +365,17 @@ class BinjaFeatureExtractor(FeatureExtractor):
             {"disable": "True"} if progress_kwargs is None else progress_kwargs
         )
         with self.open_view(
-                path,
-                # progress_func=self.progress,
+            path,
+            # progress_func=self.progress,
         ) as bv:
             bs = self.extract_from_bv(bv, progress_kwargs)
             if not bs.functionFeatureList:
                 raise self.NotABinaryError(f"No functions found in {path}")
             return bs
 
-    def extract_function(self, path_or_bv: Union[Path, BinaryView], function: Union[str, int]) -> "FunctionFeatures":
+    def extract_function(
+        self, path_or_bv: Union[Path, BinaryView], function: Union[str, int]
+    ) -> "FunctionFeatures":
         """
         Extracts features from a single function in a binary.
         :param path_or_bv: path to binary or loaded bv
@@ -435,7 +469,7 @@ class FunctionFeatures:
 
         @staticmethod
         def fromArray(array: np.ndarray) -> Iterable[str]:
-            if 'strings_warning' not in dir(logger):
+            if "strings_warning" not in dir(logger):
                 logger.debug("There is a bug here, strings are not displayed properly")
                 logger.strings_warning = True  # type: ignore
             if len(array) != FunctionFeatures.Strings.length:
@@ -479,13 +513,13 @@ class FunctionFeatures:
         [
             x.length
             for x in [
-            Constants,
-            Strings,
-            InstructionHistogram,
-            DominatorSignature,
-            VertexHistogram,
-            EdgeHistogram,
-        ]
+                Constants,
+                Strings,
+                InstructionHistogram,
+                DominatorSignature,
+                VertexHistogram,
+                EdgeHistogram,
+            ]
         ]
     )
     # Reference used to set the foreign key in the database
@@ -532,12 +566,12 @@ class FunctionFeatures:
             logger.dominator_warning = False
             if len(array) != self.length:
                 for field in (
-                        self.vertex_histogram,
-                        self.edge_histogram,
-                        self.instruction_histogram,
-                        self.dominator_signature,
-                        self.constants,
-                        self.strings,
+                    self.vertex_histogram,
+                    self.edge_histogram,
+                    self.instruction_histogram,
+                    self.dominator_signature,
+                    self.constants,
+                    self.strings,
                 ):
                     arr = field if issubclass(type(field), list) else field.asArray()
                     logger.error(
@@ -554,11 +588,11 @@ class FunctionFeatures:
 
     @classmethod
     def fromArray(
-            cls,
-            array: npt.NDArray[np.uint32],
-            name: str,
-            path: Path,
-            extraction_engine: FeatureExtractor,
+        cls,
+        array: npt.NDArray[np.uint32],
+        name: str,
+        path: Path,
+        extraction_engine: FeatureExtractor,
     ) -> "FunctionFeatures":
         if not len(array) == cls.length:
             raise ValueError(
@@ -572,66 +606,66 @@ class FunctionFeatures:
             num_strings=array[2],
             max_string_length=array[3],
             vertex_histogram=FunctionFeatures.VertexHistogram(
-                array[4: 4 + FunctionFeatures.VertexHistogram.length]
+                array[4 : 4 + FunctionFeatures.VertexHistogram.length]
             ),
             edge_histogram=FunctionFeatures.EdgeHistogram(
                 array[
-                4
-                + FunctionFeatures.VertexHistogram.length: 4
-                                                           + FunctionFeatures.VertexHistogram.length
-                                                           + FunctionFeatures.EdgeHistogram.length
+                    4
+                    + FunctionFeatures.VertexHistogram.length : 4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length
                 ]
             ),
             instruction_histogram=FunctionFeatures.InstructionHistogram(
                 array[
-                4
-                + FunctionFeatures.VertexHistogram.length
-                + FunctionFeatures.EdgeHistogram.length: 4
-                                                         + FunctionFeatures.VertexHistogram.length
-                                                         + FunctionFeatures.EdgeHistogram.length
-                                                         + FunctionFeatures.InstructionHistogram.length
+                    4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length : 4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length
+                    + FunctionFeatures.InstructionHistogram.length
                 ]
             ),
             dominator_signature=FunctionFeatures.DominatorSignature(
                 array[
-                4
-                + FunctionFeatures.VertexHistogram.length
-                + FunctionFeatures.EdgeHistogram.length
-                + FunctionFeatures.InstructionHistogram.length: 4
-                                                                + FunctionFeatures.VertexHistogram.length
-                                                                + FunctionFeatures.EdgeHistogram.length
-                                                                + FunctionFeatures.InstructionHistogram.length
-                                                                + FunctionFeatures.DominatorSignature.length
+                    4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length
+                    + FunctionFeatures.InstructionHistogram.length : 4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length
+                    + FunctionFeatures.InstructionHistogram.length
+                    + FunctionFeatures.DominatorSignature.length
                 ]
             ),
             constants=FunctionFeatures.Constants(
                 array[
-                4
-                + FunctionFeatures.VertexHistogram.length
-                + FunctionFeatures.EdgeHistogram.length
-                + FunctionFeatures.InstructionHistogram.length
-                + FunctionFeatures.DominatorSignature.length: 4
-                                                              + FunctionFeatures.VertexHistogram.length
-                                                              + FunctionFeatures.EdgeHistogram.length
-                                                              + FunctionFeatures.InstructionHistogram.length
-                                                              + FunctionFeatures.DominatorSignature.length
-                                                              + FunctionFeatures.Constants.length
+                    4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length
+                    + FunctionFeatures.InstructionHistogram.length
+                    + FunctionFeatures.DominatorSignature.length : 4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length
+                    + FunctionFeatures.InstructionHistogram.length
+                    + FunctionFeatures.DominatorSignature.length
+                    + FunctionFeatures.Constants.length
                 ]
             ),
             strings=FunctionFeatures.Strings(
                 array[
-                4
-                + FunctionFeatures.VertexHistogram.length
-                + FunctionFeatures.EdgeHistogram.length
-                + FunctionFeatures.InstructionHistogram.length
-                + FunctionFeatures.DominatorSignature.length
-                + FunctionFeatures.Constants.length: 4
-                                                     + FunctionFeatures.VertexHistogram.length
-                                                     + FunctionFeatures.EdgeHistogram.length
-                                                     + FunctionFeatures.InstructionHistogram.length
-                                                     + FunctionFeatures.DominatorSignature.length
-                                                     + FunctionFeatures.Constants.length
-                                                     + FunctionFeatures.Strings.length
+                    4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length
+                    + FunctionFeatures.InstructionHistogram.length
+                    + FunctionFeatures.DominatorSignature.length
+                    + FunctionFeatures.Constants.length : 4
+                    + FunctionFeatures.VertexHistogram.length
+                    + FunctionFeatures.EdgeHistogram.length
+                    + FunctionFeatures.InstructionHistogram.length
+                    + FunctionFeatures.DominatorSignature.length
+                    + FunctionFeatures.Constants.length
+                    + FunctionFeatures.Strings.length
                 ]
             ),
         )
@@ -677,7 +711,9 @@ class FunctionFeatures:
     def __xor__(self, other):
         if not isinstance(other, FunctionFeatures):
             raise TypeError(f"Cannot xor {type(self)} with {type(other)}")
-        return bytes([a ^ b for a, b in zip(self.asBytes(), other.asBytes())]).count(b'\x00') / (self.length * 4)
+        return bytes([a ^ b for a, b in zip(self.asBytes(), other.asBytes())]).count(
+            b"\x00"
+        ) / (self.length * 4)
 
 
 @dataclass
@@ -699,14 +735,14 @@ class BinarySignature:
         if not self.extraction_engine:
             self.extraction_engine = self.functionFeatureList[0].extraction_engine
         if any(
-                f.extraction_engine != self.extraction_engine
-                for f in self.functionFeatureList
+            f.extraction_engine != self.extraction_engine
+            for f in self.functionFeatureList
         ):
             raise ValueError("All functions must have the same extraction engine.")
 
     def resolve_path(self):
-        if (TLD / 'hashashin' / self.path).exists():
-            self.path = TLD / 'hashashin' / self.path
+        if (TLD / "hashashin" / self.path).exists():
+            self.path = TLD / "hashashin" / self.path
             return
         for i in range(len(self.path.parts)):
             if Path(*self.path.parts[i:]).exists():
@@ -734,7 +770,7 @@ class BinarySignature:
 
     @staticmethod
     def min_hash(
-            features: npt.NDArray[np.uint32], sig_len: int = SIGNATURE_LEN, seed: int = 2023
+        features: npt.NDArray[np.uint32], sig_len: int = SIGNATURE_LEN, seed: int = 2023
     ) -> npt.NDArray[np.uint32]:
         """
         Generate a minhash signature for a given set of features.
@@ -745,8 +781,8 @@ class BinarySignature:
         :return: a string representing the minhash signature
         """
         random_state = np.random.RandomState(seed)
-        a = random_state.randint(0, 2 ** 32 - 1, size=sig_len)
-        b = random_state.randint(0, 2 ** 32 - 1, size=sig_len)
+        a = random_state.randint(0, 2**32 - 1, size=sig_len)
+        b = random_state.randint(0, 2**32 - 1, size=sig_len)
         c = 4297922131  # prime number above 2**32-1
 
         b = np.stack([np.stack([b] * features.shape[0])] * features.shape[1]).T
@@ -786,7 +822,9 @@ class BinarySignature:
     def binary_hash(self) -> bytes:
         return self.hash_file(self.path)
 
-    def get_function_features(self, func_name: Optional[str], func_addr: Optional[int]) -> Optional[FunctionFeatures]:
+    def get_function_features(
+        self, func_name: Optional[str], func_addr: Optional[int]
+    ) -> Optional[FunctionFeatures]:
         if func_name:
             for f in self.functionFeatureList:
                 if func_name in f.function.name:
@@ -799,7 +837,7 @@ class BinarySignature:
 
     @staticmethod
     def minhash_similarity(
-            sig1: npt.NDArray[np.uint32], sig2: npt.NDArray[np.uint32]
+        sig1: npt.NDArray[np.uint32], sig2: npt.NDArray[np.uint32]
     ) -> float:
         """
         Calculate the similarity between two minhash signatures.
@@ -812,7 +850,7 @@ class BinarySignature:
 
     @staticmethod
     def jaccard_similarity(
-            sig1: Set[FunctionFeatures], sig2: Set[FunctionFeatures]
+        sig1: Set[FunctionFeatures], sig2: Set[FunctionFeatures]
     ) -> float:
         """
         Calculate the feature distance between two signatures.
@@ -860,11 +898,17 @@ class BinarySignature:
 
     def __xor__(self, other) -> float:
         if isinstance(other, bytes):
-            return bytes([a ^ b for a, b in zip(self.signature, other)]).count(b'\x00') / len(self.signature)
+            return bytes([a ^ b for a, b in zip(self.signature, other)]).count(
+                b"\x00"
+            ) / len(self.signature)
         if isinstance(other, BinarySignature):
-            return bytes([a ^ b for a, b in zip(self.signature, other.signature)]).count(b'\x00') / len(self.signature)
+            return bytes(
+                [a ^ b for a, b in zip(self.signature, other.signature)]
+            ).count(b"\x00") / len(self.signature)
         if isinstance(other, BinarySigModel):
-            return bytes([a ^ b for a, b in zip(self.signature, other.sig)]).count(b'\x00') / len(self.signature)
+            return bytes([a ^ b for a, b in zip(self.signature, other.sig)]).count(
+                b"\x00"
+            ) / len(self.signature)
         raise TypeError(f"Cannot xor BinarySigModel with {type(other)}")
 
     # print the path and signature

@@ -114,16 +114,21 @@ def _compute_instruction_histogram(
     """
     vector: list[int] = [0] * len(enums.MediumLevelILOperation.__members__)
     if not fn.mlil:
-        logger.debug(f"MLIL not available for function {fn.name}, rerunning analysis...")
+        logger.debug(
+            f"MLIL not available for function {fn.name}, rerunning analysis..."
+        )
         start = time.time()
         fn.analysis_skipped = False
         fn.reanalyze()
         while (
-            time.time() - start < timeout and
-            fn.view.analysis_progress.state != enums.AnalysisState.IdleState
+            time.time() - start < timeout
+            and fn.view.analysis_progress.state != enums.AnalysisState.IdleState
         ):
             if logger.getEffectiveLevel() <= logging.DEBUG:
-                print(f"Waiting for analysis to complete... {time.time() - start:.1f}/{timeout}s", end="\r")
+                print(
+                    f"Waiting for analysis to complete... {time.time() - start:.1f}/{timeout}s",
+                    end="\r",
+                )
             time.sleep(0.1)
         if logger.getEffectiveLevel() <= logging.DEBUG:
             print()
@@ -141,7 +146,7 @@ def _compute_instruction_histogram(
 
 
 def compute_instruction_histogram(
-        fn: BinaryNinjaFunction, timeout: int = 15
+    fn: BinaryNinjaFunction, timeout: int = 15
 ) -> list[int]:
     try:
         return _compute_instruction_histogram(fn, timeout)
