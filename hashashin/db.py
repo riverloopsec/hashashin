@@ -308,14 +308,14 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
             if threshold == 0:
                 return (
                     session.query(BinarySigModel)
-                    .filter(BinarySigModel.sig == signature.signature)
+                    .filter(BinarySigModel.sig == signature.zlib_signature)
                     .all()
                 )
             signatures = session.query(BinarySigModel).all()
             signatures = list(
                 filter(
                     lambda s: (s ^ signature).count(b"\x00")
-                    > threshold * len(signature.signature),
+                    > threshold * len(signature.zlib_signature),
                     signatures,
                 )
             )
@@ -336,13 +336,13 @@ class SQLAlchemyBinarySignatureRepository(BinarySignatureRepository):
             if threshold == 1:
                 return (
                     session.query(BinarySigModel)
-                    .filter(BinarySigModel.sig == signature.signature)
+                    .filter(BinarySigModel.sig == signature.zlib_signature)
                     .all()
                 )
             signatures = session.query(BinarySigModel).all()
             for sig in signatures:
                 try:
-                    BinarySignature.fromModel(sig).np_signature
+                    BinarySignature.fromModel(sig).signature
                 except Exception as e:
                     breakpoint()
                     pass
@@ -711,7 +711,7 @@ def _load_library_matrix(
         logger.info(f"Computing {library} signature matrix for caching.")
         library_matrix = np.stack(
             [
-                bs.np_signature
+                bs.signature
                 for bs in tqdm(lib_bins, disable=not logger.isEnabledFor(logging.DEBUG))
             ]
         )
@@ -811,9 +811,9 @@ def get_closest_library_versions(
         bs = BinarySignature.fromFile(bin_path, extractor)
 
         closest_sig = max(
-            library_matrix, key=lambda x: bs.minhash_similarity(bs.np_signature, x)
+            library_matrix, key=lambda x: bs.minhash_similarity(bs.signature, x)
         )
-        closest_value = bs.minhash_similarity(bs.np_signature, closest_sig)
+        closest_value = bs.minhash_similarity(bs.signature, closest_sig)
         if closest_value < triage_threshold:
             logger.info(
                 f"Closest {library} signature to {bin_path} is {closest_value} below threshold {triage_threshold}. Skipping."

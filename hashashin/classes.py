@@ -1,4 +1,3 @@
-import zlib
 from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +22,7 @@ from sqlalchemy import ForeignKey
 from sqlalchemy import Integer
 from sqlalchemy import LargeBinary
 from sqlalchemy import String
+from sqlalchemy import PickleType
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm.relationships import RelationshipProperty
@@ -54,7 +54,7 @@ class BinarySigModel(ORM_BASE):
     id = Column(Integer, primary_key=True)
     hash = Column(LargeBinary, unique=True, index=True)
     path = Column(String, index=True)
-    sig = Column(LargeBinary, nullable=True)
+    sig = Column(LargeBinary, nullable=False)
     functions: RelationshipProperty = relationship(
         "FunctionFeatModel", cascade="all, delete-orphan"
     )
@@ -70,7 +70,7 @@ class BinarySigModel(ORM_BASE):
             return cls(
                 hash=sig.binary_hash,
                 path=path,
-                sig=sig.signature,
+                sig=sig.zlib_signature,
                 extraction_engine=str(sig.extraction_engine),
             )
 
@@ -87,7 +87,7 @@ class BinarySigModel(ORM_BASE):
         if isinstance(other, bytes):
             return bytes([a ^ b for a, b in zip(self.sig, other)])
         if isinstance(other, BinarySignature):
-            return bytes([a ^ b for a, b in zip(self.sig, other.signature)])
+            return bytes([a ^ b for a, b in zip(self.sig, other.zlib_signature)])
         if isinstance(other, BinarySigModel):
             return bytes([a ^ b for a, b in zip(self.sig, other.sig)])
         raise TypeError(f"Cannot xor BinarySigModel with {type(other)}")
@@ -418,19 +418,34 @@ def extractor_from_name(name: str) -> FeatureExtractor:
 
 @dataclass
 class FunctionFeatures:
-    class VertexHistogram(list):
+    class Feature(ABC):
+        length: int  # uint32 bytes
+
+    class CyclomaticComplexity(Feature, int):
+        length = 1  # uint32 bytes
+
+    class NumInstructions(Feature, int):
+        length = 1
+
+    class NumStrings(Feature, int):
+        length = 1
+
+    class MaxStringLen(Feature, int):
+        length = 1
+
+    class VertexHistogram(Feature, list):
         length = VERTICES
 
-    class EdgeHistogram(list):
+    class EdgeHistogram(Feature, list):
         length = EDGES
 
-    class InstructionHistogram(list):
+    class InstructionHistogram(Feature, list):
         length = len(enums.MediumLevelILOperation.__members__)
 
         def __repr__(self):
             return "|".join(str(x) for x in self)
 
-    class DominatorSignature(int):
+    class DominatorSignature(Feature, int):
         length = 32
 
         def __new__(cls, *args, **kwargs):
@@ -444,14 +459,14 @@ class FunctionFeatures:
         def asArray(self):
             x = split_int_to_uint32(self, pad=self.length, wrap=True)
             # if int(np.ceil(len(bin(self)) / 32)) > self.length:
-            if self > 2 ** (self.length * 32):
+            if not logger.dominator_warning and self > 2 ** (self.length * 32):
                 logger.debug(
                     f"Dominator signature too long, truncating {hex(self)} -> {hex(merge_uint32_to_int(x))}"
                 )
                 logger.dominator_warning = True
             return x
 
-    class Constants(list):
+    class Constants(Feature, list):
         length = 64
 
         def asArray(self):
@@ -459,13 +474,13 @@ class FunctionFeatures:
                 0, self.length - len(self)
             )
 
-    class Strings(list):
+    class Strings(Feature, list):
         length = 512
 
         def __init__(self, strings):
             if type(strings) == np.ndarray:
-                return super().__init__(self.fromArray(strings))
-            return super().__init__(strings)
+                super().__init__(self.fromArray(strings))
+            super().__init__(strings)
 
         @staticmethod
         def fromArray(array: np.ndarray) -> Iterable[str]:
@@ -503,33 +518,41 @@ class FunctionFeatures:
     num_instructions: int
     num_strings: int
     max_string_length: int
-    constants: Constants
-    strings: Strings
     instruction_histogram: InstructionHistogram
     dominator_signature: DominatorSignature
     vertex_histogram: VertexHistogram
     edge_histogram: EdgeHistogram
+    constants: Constants
+    strings: Strings
     length = 4 + sum(
         [
             x.length
             for x in [
-                Constants,
-                Strings,
                 InstructionHistogram,
                 DominatorSignature,
                 VertexHistogram,
                 EdgeHistogram,
+                Constants,
+                Strings,
             ]
         ]
     )
     # Reference used to set the foreign key in the database
     binary_id: Optional[int] = None
+    FEATURE_ORDERING = [
+        CyclomaticComplexity,
+        NumInstructions,
+        NumStrings,
+        MaxStringLen,
+        InstructionHistogram,
+        DominatorSignature,
+        VertexHistogram,
+        EdgeHistogram,
+        Constants,
+        Strings,
+    ]
 
     def __post_init__(self):
-        if not isinstance(self.constants, self.Constants):
-            self.constants = self.Constants(self.constants)
-        if not isinstance(self.strings, self.Strings):
-            self.strings = self.Strings(self.strings)
         if not isinstance(self.instruction_histogram, self.InstructionHistogram):
             self.instruction_histogram = self.InstructionHistogram(
                 self.instruction_histogram
@@ -540,6 +563,10 @@ class FunctionFeatures:
             self.vertex_histogram = self.VertexHistogram(self.vertex_histogram)
         if not isinstance(self.edge_histogram, self.EdgeHistogram):
             self.edge_histogram = self.EdgeHistogram(self.edge_histogram)
+        if not isinstance(self.constants, self.Constants):
+            self.constants = self.Constants(self.constants)
+        if not isinstance(self.strings, self.Strings):
+            self.strings = self.Strings(self.strings)
 
     def asArray(self) -> npt.NDArray[np.uint32]:
         try:
@@ -722,16 +749,9 @@ class BinarySignature:
     path: Path
     functionFeatureList: List[FunctionFeatures]
     extraction_engine: FeatureExtractor
-    cached_signature: Optional[bytes] = None
-    cached_array: Optional[np.ndarray] = None
+    cached_signature: Optional[np.ndarray] = None
 
     def __post_init__(self):
-        # TODO: remove this hack
-        if not self.path.exists():
-            if (TLD / "hashashin" / self.path).exists():
-                self.path = TLD / "hashashin" / self.path
-            else:
-                logger.debug(f"Could not find {self.path}")
         if not self.extraction_engine:
             self.extraction_engine = self.functionFeatureList[0].extraction_engine
         if any(
@@ -792,21 +812,14 @@ class BinarySignature:
         return minhash
 
     @property
-    def np_signature(self) -> npt.NDArray[np.uint32]:
-        if self.cached_array is None:
-            self.cached_array = self.min_hash(
+    def signature(self) -> npt.NDArray[np.uint32]:
+        if self.cached_signature is None:
+            logger.debug("Computing np signature.")
+            self.cached_signature = self.min_hash(
                 np.array([f.asArray() for f in self.functionFeatureList])
             )
         else:
             logger.debug("Using cached np signature.")
-        return self.cached_array
-
-    @property
-    def signature(self) -> bytes:
-        if self.cached_signature is None:
-            self.cached_signature = zlib.compress(self.np_signature.tobytes())
-        else:
-            logger.debug("Using cached signature.")
         return self.cached_signature
 
     @property
@@ -833,6 +846,8 @@ class BinarySignature:
             for f in self.functionFeatureList:
                 if f.function.function.start == func_addr:
                     return f
+        else:
+            raise ValueError("Must provide either func_name or func_addr.")
         return None
 
     @staticmethod
@@ -865,29 +880,44 @@ class BinarySignature:
             sig2 = set(sig2)
         return len(sig1.intersection(sig2)) / len(sig1.union(sig2))
 
+    # @staticmethod
+    # def jaccard_estimate(sig1: Set[bytes], sig2: Set[bytes]) -> float:
+    #     """
+    #     Calculate the feature distance between two signatures.
+    #
+    #     :param sig1: the first signature
+    #     :param sig2: the second signature
+    #     :return: the distance between the two signatures
+    #     """
+    #     if isinstance(sig1, list):
+    #         sig1 = set(sig1)
+    #     if isinstance(sig2, list):
+    #         sig2 = set(sig2)
+    #     return len(sig1.intersection(sig2)) / len(sig1.union(sig2))
+
     @staticmethod
-    def jaccard_estimate(sig1: Set[bytes], sig2: Set[bytes]) -> float:
+    def hamming_distance(a: bytes, b: bytes) -> float:
         """
-        Calculate the feature distance between two signatures.
+        Calculate the hamming distance between two signatures.
 
-        :param sig1: the first signature
-        :param sig2: the second signature
-        :return: the distance between the two signatures
+        :param a: the first byte string
+        :param b: the second byte string
+        :return: the hamming distance between the two byte strings
         """
-        if isinstance(sig1, list):
-            sig1 = set(sig1)
-        if isinstance(sig2, list):
-            sig2 = set(sig2)
-        return len(sig1.intersection(sig2)) / len(sig1.union(sig2))
+        if len(a) != len(b):
+            raise ValueError("Hamming distance requires equal length inputs.")
+        return sum([x == y for x, y in zip(a, b)]) / len(a)
 
-    def __floordiv__(self, other: "BinarySignature") -> float:
+    def __xor__(self, other: "BinarySignature") -> float:
+        """Compute minhash similarity between signatures."""
         if not isinstance(other, BinarySignature):
             raise TypeError(
                 f"Cannot divide {type(other)} from {type(self)} (expected BinarySignature)"
             )
-        return self.minhash_similarity(self.np_signature, other.np_signature)
+        return self.minhash_similarity(self.signature, other.signature)
 
     def __sub__(self, other: "BinarySignature") -> float:
+        """Compute jaccard similarity between signatures' function features."""
         if not isinstance(other, BinarySignature):
             raise TypeError(
                 f"Cannot subtract {type(other)} from {type(self)} (expected BinarySignature)"
@@ -896,21 +926,5 @@ class BinarySignature:
             set(self.functionFeatureList), set(other.functionFeatureList)
         )
 
-    def __xor__(self, other) -> float:
-        if isinstance(other, bytes):
-            return bytes([a ^ b for a, b in zip(self.signature, other)]).count(
-                b"\x00"
-            ) / len(self.signature)
-        if isinstance(other, BinarySignature):
-            return bytes(
-                [a ^ b for a, b in zip(self.signature, other.signature)]
-            ).count(b"\x00") / len(self.signature)
-        if isinstance(other, BinarySigModel):
-            return bytes([a ^ b for a, b in zip(self.signature, other.sig)]).count(
-                b"\x00"
-            ) / len(self.signature)
-        raise TypeError(f"Cannot xor BinarySigModel with {type(other)}")
-
-    # print the path and signature
     def __repr__(self):
-        return f"<BinarySignature {self.path} {self.signature}>"
+        return f"<BinarySignature {self.path} {self.signature.tobytes()}>"
