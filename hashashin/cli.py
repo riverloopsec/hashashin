@@ -1,14 +1,14 @@
 from typing import Optional
 import argparse
+from hashashin.db import AbstractHashRepository
 from hashashin.app import HashApp
 from hashashin.utils import get_binaries
 from hashashin.classes import BinarySignature
+from hashashin.db import RepositoryType
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-APP: HashApp
 
 
 def _options_parser(parser: argparse.ArgumentParser):
@@ -24,6 +24,7 @@ def _db_parser(parser: argparse.ArgumentParser):
     db_group = parser.add_argument_group("Database Operations")
     db_group.add_argument(
         "--summary",
+        "-db",
         type=str,
         nargs="?",
         const="",
@@ -114,7 +115,7 @@ def validate_args(args, parser=None) -> None:
         parser.error("Invalid arguments. See --help for more information.")
 
 
-def _db_handler(args: argparse.Namespace) -> bool:
+def _db_handler(args: argparse.Namespace, db: AbstractHashRepository) -> bool:
     logger.debug(
         "DB args: "
         + str(
@@ -124,24 +125,24 @@ def _db_handler(args: argparse.Namespace) -> bool:
         )
     )
 
-    if getattr(args, 'summary', None) is not None:
+    if getattr(args, "summary", None) is not None:
         logger.debug("Printing database summary")
-        num_binaries, num_functions = APP.repo.binary_repo.summary(args.summary)
+        num_binaries, num_functions = db.summary(args.summary)
         msg = f"*{args.summary}*" if args.summary else "all"
         logger.info(f"Summary for {msg} binary paths:")
         logger.info(f"\tBinaries: {num_binaries}")
         logger.info(f"\tFunctions: {num_functions}")
         return False  # Continue execution if summary is printed
-    if getattr(args, 'drop', None) is not None:
+    if getattr(args, "drop", None) is not None:
         if not input(f"Confirm drop {args.drop}? [y/N] ").lower().startswith("y"):
             logger.info("Aborting drop")
             return True
-        APP.repo.drop(args.drop)
+        db.drop(args.drop)
         return True  # Exit after drop
     return False
 
 
-def _demo_handler(args: argparse.Namespace) -> bool:
+def _demo_handler(args: argparse.Namespace, app: HashApp) -> bool:
     logger.debug(
         "Demo args: "
         + str(
@@ -151,13 +152,13 @@ def _demo_handler(args: argparse.Namespace) -> bool:
         )
     )
 
-    if getattr(args, 'fast_match', None) is not None:
+    if getattr(args, "fast_match", None) is not None:
         logger.debug("Fast matching binaries")
         for target in map(Path, args.fast_match):
             if not target.is_file() or len(get_binaries(target, silent=True)) == 0:
                 logger.debug(f"Skipping {target} as it is not a binary")
                 continue
-            hashed_target = APP.hash(target)
+            hashed_target = app.hash(target)
             if hashed_target is None:
                 logger.error(f"Failed to hash {target}")
                 continue
@@ -167,7 +168,7 @@ def _demo_handler(args: argparse.Namespace) -> bool:
                 raise Exception
             hashed_target = hashed_target[0]
             logger.info(f"Fast matching {hashed_target.path}")
-            matches = APP.repo.binary_repo.fast_match(target, args.threshold)
+            matches = app.repo.binary_repo.fast_match(target, args.threshold)
             matches = list(filter(lambda x: x.path != (target.path), matches))
             _log = f"Found {len(matches)} matches above {args.threshold} similarity"
             if len(matches) == 0:
@@ -182,9 +183,9 @@ def _demo_handler(args: argparse.Namespace) -> bool:
                 + "\n"
             )
         return True
-    if getattr(args, 'robust_match', None) is not None:
+    if getattr(args, "robust_match", None) is not None:
         logger.debug("Robust matching binaries")
-        top5 = APP.match(args.robust_match, n=5)
+        top5 = app.match(args.robust_match, n=5)
         for target, matches in top5.items():
             logger.info(
                 f"Robust matching {target}:\n"
@@ -194,14 +195,14 @@ def _demo_handler(args: argparse.Namespace) -> bool:
                 + "\n"
             )
         return True
-    if getattr(args, 'stdlib', None):
+    if getattr(args, "stdlib", None):
         raise NotImplementedError
-    if getattr(args, 'snmp', None):
+    if getattr(args, "snmp", None):
         raise NotImplementedError
     return False
 
 
-def hash_binaries(binaries: list[str]) -> list[BinarySignature]:
+def hash_binaries(binaries: list[str], app: HashApp) -> list[BinarySignature]:
     logger.debug("Hashing binaries")
     bins = list()
     for target in map(Path, binaries):
@@ -209,11 +210,11 @@ def hash_binaries(binaries: list[str]) -> list[BinarySignature]:
             logger.debug(f"Skipping {target} as it is not a binary")
             continue
         logger.info(f"Hashing {target}")
-        bins.extend(APP.hash(target))
+        bins.extend(app.hash(target))
     return bins
 
 
-def _app_handler(args: argparse.Namespace) -> bool:
+def _app_handler(args: argparse.Namespace, app: HashApp) -> bool:
     logger.debug(
         "App args: "
         + str(
@@ -223,39 +224,44 @@ def _app_handler(args: argparse.Namespace) -> bool:
         )
     )
 
-    if getattr(args, 'hash', None) is not None:
-        logger.info(f"Saving {len(hash_bins := hash_binaries(args.hash))} binaries to db.")
-        APP.repo.save(hash_bins)
+    if getattr(args, "hash", None) is not None:
+        logger.info(
+            f"Saving {len(hash_bins := hash_binaries(args.hash, app))} binaries to db."
+        )
+        app.save(hash_bins)
 
-    if getattr(args, 'match', None) is not None:
+    if getattr(args, "match", None) is not None:
         logger.debug("Matching binaries")
-        match_bins = APP.hash(args.match)
-        if getattr(args, 'hash', None) is not None:
+        match_bins = app.hash(args.match)
+        if getattr(args, "hash", None) is not None:
             logger.info(f"Saving {len(match_bins)} binaries to db.")
-            APP.repo.save(match_bins)
-        top10 = APP.match(match_bins, n=10)
+            app.save(match_bins)
+        top10 = app.match(match_bins, n=10)
         raise NotImplementedError
 
     return bool(args.match or args.hash)
 
 
-def cli_handler(args: argparse.Namespace, parser: Optional[argparse.ArgumentParser] = None):
+def cli_handler(
+    args: argparse.Namespace,
+    parser: Optional[argparse.ArgumentParser] = None,
+):
     validate_args(args, parser)
 
-    level = logging.DEBUG if getattr(args, 'debug', False) else logging.INFO
+    level = logging.DEBUG if getattr(args, "debug", False) else logging.INFO
     logging.basicConfig(
         format="%(asctime)s,%(msecs)03d %(levelname)-6s [%(filename)s:%(lineno)d] %(message)s",
         datefmt="%Y-%m-%d:%H:%M:%S",
         level=level,
     )
 
-    global APP
-    APP = HashApp()
-    if _db_handler(args):
+    app = HashApp.from_type(RepositoryType.SQLALCHEMY, extractor="binja")
+
+    if _db_handler(args, app.repo):
         return
-    if _demo_handler(args):
+    if _demo_handler(args, app):
         return
-    if _app_handler(args):
+    if _app_handler(args, app):
         return
 
 

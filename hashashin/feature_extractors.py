@@ -9,6 +9,7 @@ from binaryninja import BasicBlock  # type: ignore
 from binaryninja import BinaryView  # type: ignore
 from binaryninja import Function as BinaryNinjaFunction
 from binaryninja import enums  # type: ignore
+from binaryninja.binaryview import BinaryView
 
 import logging
 

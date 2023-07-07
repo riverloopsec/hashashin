@@ -28,14 +28,17 @@ def get_features(view, func):
 #         for func in self.view.functions:
 
 
-
 def get_signature(view):
     task = BackgroundTaskThread(f"Computing {len(view.functions)} function features...")
+
     def extract_signature():
-        view.session_data["BinarySignature"] = (bs := BinjaFeatureExtractor().extract_from_bv(view))
+        view.session_data["BinarySignature"] = (
+            bs := BinjaFeatureExtractor().extract_from_bv(view)
+        )
         for ff in bs.functionFeatureList:
             apply_comment(ff.function.function, ff)
         print(f"Signature for {view.file.filename}:\n{bs.signature}")
+
     task.run(extract_signature)
 
 

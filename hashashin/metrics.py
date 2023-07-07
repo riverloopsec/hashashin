@@ -59,10 +59,10 @@ def compute_matrices(signatures) -> Tuple[np.ndarray, np.ndarray, list]:
     logger.info(f"Computing similarity matrix")
     logger.debug(",".join(b.name for b in binaries))
     np_signatures = [
-        s.np_signature for s in tqdm(signatures, desc="Converting signatures to numpy")
+        s.signature for s in tqdm(signatures, desc="Converting signatures to numpy")
     ]
     function_sigs = [
-        [f.signature for f in s.functionFeatureList] for s in tqdm(signatures)
+        [f.zlib_signature for f in s.functionFeatureList] for s in tqdm(signatures)
     ]
     for i, j in tqdm(
         np.ndindex(len(binaries), len(binaries)),
@@ -163,11 +163,11 @@ def generate_matrix_norms(base_path, hashApp, paths, rescale=None):
 def main():
     from hashashin.main import ApplicationFactory, HashashinApplicationContext
     from hashashin.classes import BinjaFeatureExtractor
-    from hashashin.db import HashRepository
+    from hashashin.db import SQLAlchemyHashRepository
 
     app_context = HashashinApplicationContext(
         extractor=BinjaFeatureExtractor(),
-        hash_repo=HashRepository(),
+        hash_repo=SQLAlchemyHashRepository(),
         target_path=None,
         save_to_db=True,
         progress=True,

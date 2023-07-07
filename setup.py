@@ -14,19 +14,15 @@ except ImportError as e:
         installed_api = True
         print("Installing Binary Ninja API...")
         os.system(
-           "python3 /Applications/Binary\ Ninja.app/Contents/Resources/scripts/install_api.py"
+            "python3 /Applications/Binary\ Ninja.app/Contents/Resources/scripts/install_api.py"
         )
-    elif os.path.exists(
-        "/binaryninja/scripts/install_api.py"
-    ):
+    elif os.path.exists("/binaryninja/scripts/install_api.py"):
         installed_api = True
         print("Installing Binary Ninja API...")
-        os.system(
-           "python3 /binaryninja/scripts/install_api.py"
-        )
+        os.system("python3 /binaryninja/scripts/install_api.py")
     else:
         print(
-           "Binary Ninja not found. Please install Binary Ninja using install_api.py first."
+            "Binary Ninja not found. Please install Binary Ninja using install_api.py first."
         )
         import sys
 
@@ -69,10 +65,12 @@ setuptools.setup(
             "hashashin-lib-match = hashashin.db:get_closest_library_version_cli",
         ]
     },
-    package_data={"hashashin": [
-        "net-snmp*.pickle",
-        "hashashin.db",
-    ]}
+    package_data={
+        "hashashin": [
+            "net-snmp*.pickle",
+            "hashashin.db",
+        ]
+    },
 )
 
 # TODO: This is not outputting during install

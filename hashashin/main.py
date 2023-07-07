@@ -17,7 +17,7 @@ from hashashin.classes import BinarySignature
 from hashashin.classes import BinjaFeatureExtractor
 from hashashin.classes import FeatureExtractor
 from hashashin.classes import FunctionFeatures
-from hashashin.db import HashRepository
+from hashashin.db import SQLAlchemyHashRepository
 from hashashin.db import BinarySignatureRepository
 from hashashin.db import SQLAlchemyBinarySignatureRepository
 from hashashin.db import SQLAlchemyFunctionFeatureRepository
@@ -83,7 +83,7 @@ def main(args: Optional[argparse.Namespace] = None):
             if not target.is_file() or len(get_binaries(target, silent=True)) == 0:
                 logger.debug(f"{target} is not a valid binary")
                 continue
-            hash_repo = HashRepository()
+            hash_repo = SQLAlchemyHashRepository()
             target = hash_repo.get(target)
             if target is None:
                 logger.error(f"Failed to hash {target}")
@@ -113,7 +113,7 @@ def main(args: Optional[argparse.Namespace] = None):
         return
 
     if args.robust_match:
-        hash_repo = HashRepository()
+        hash_repo = SQLAlchemyHashRepository()
         targets = [
             hash_repo.get(path)
             for path in args.robust_match

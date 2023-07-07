@@ -6,6 +6,7 @@ from typing import Iterable
 from typing import Optional
 from typing import Set
 from typing import Dict
+from typing import Type
 from typing import Union
 from typing import Callable
 
@@ -18,6 +19,7 @@ from binaryninja import core_version
 from binaryninja import enums
 from binaryninja import open_view
 from sqlalchemy import Column
+from sqlalchemy import Dialect
 from sqlalchemy import ForeignKey
 from sqlalchemy import Integer
 from sqlalchemy import LargeBinary
@@ -26,6 +28,8 @@ from sqlalchemy import PickleType
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm.relationships import RelationshipProperty
+from sqlalchemy.sql.type_api import _T
+from sqlalchemy.types import TypeDecorator
 from tqdm import tqdm
 
 from hashashin.feature_extractors import EDGES
@@ -48,13 +52,30 @@ ORM_BASE: Any = declarative_base()
 TLD = Path(__file__).parent.parent
 
 
+class NumpyArray(TypeDecorator):
+    impl = LargeBinary
+
+    def process_bind_param(self, value: npt.NDArray[Any], dialect: Any) -> bytes:
+        return value.tobytes()
+
+    def process_result_value(self, value: bytes, dialect: Any) -> npt.NDArray[Any]:
+        return np.frombuffer(value, dtype=np.uint32)
+
+    def process_literal_param(self, value: Optional[_T], dialect: Dialect) -> str:
+        raise NotImplementedError()
+
+    @property
+    def python_type(self) -> Type[Any]:
+        return npt.NDArray[Any]
+
+
 class BinarySigModel(ORM_BASE):
     __tablename__ = "binaries"
     __allow_unmapped__ = True
     id = Column(Integer, primary_key=True)
     hash = Column(LargeBinary, unique=True, index=True)
-    path = Column(String, index=True)
-    sig = Column(LargeBinary, nullable=False)
+    filename = Column(String, index=True)
+    sig = Column(NumpyArray, nullable=False)
     functions: RelationshipProperty = relationship(
         "FunctionFeatModel", cascade="all, delete-orphan"
     )
@@ -69,8 +90,8 @@ class BinarySigModel(ORM_BASE):
         with open(sig.path, "rb") as f:
             return cls(
                 hash=sig.binary_hash,
-                path=path,
-                sig=sig.zlib_signature,
+                filename=path,
+                sig=sig.signature,
                 extraction_engine=str(sig.extraction_engine),
             )
 
@@ -87,7 +108,7 @@ class BinarySigModel(ORM_BASE):
         if isinstance(other, bytes):
             return bytes([a ^ b for a, b in zip(self.sig, other)])
         if isinstance(other, BinarySignature):
-            return bytes([a ^ b for a, b in zip(self.sig, other.zlib_signature)])
+            return bytes([a ^ b for a, b in zip(self.sig, other.signature)])
         if isinstance(other, BinarySigModel):
             return bytes([a ^ b for a, b in zip(self.sig, other.sig)])
         raise TypeError(f"Cannot xor BinarySigModel with {type(other)}")
@@ -105,7 +126,7 @@ class FunctionFeatModel(ORM_BASE):
         BinarySigModel, back_populates="functions"
     )
     name = Column(String)  # function name & address using func2str
-    sig = Column(LargeBinary)  # zlib compression has variable size
+    sig = Column(NumpyArray)
     extraction_engine = Column(String)
 
     @classmethod
@@ -116,37 +137,9 @@ class FunctionFeatModel(ORM_BASE):
         return cls(
             bin_id=features.binary_id,
             name=features.function.name,
-            sig=features.signature,
+            sig=features.asArray(),
             extraction_engine=str(features.extraction_engine),
         )
-
-    def __xor__(self, other):
-        if isinstance(other, bytes):
-            return bytes(
-                [
-                    a ^ b
-                    for a, b in zip(zlib.decompress(self.sig), zlib.decompress(other))
-                ]
-            ).count(b"\x00")
-        if isinstance(other, FunctionFeatures):
-            return bytes(
-                [
-                    a ^ b
-                    for a, b in zip(
-                        zlib.decompress(self.sig), zlib.decompress(other.signature)
-                    )
-                ]
-            ).count(b"\x00") / (FunctionFeatures.length * 4)
-        if isinstance(other, FunctionFeatModel):
-            return bytes(
-                [
-                    a ^ b
-                    for a, b in zip(
-                        zlib.decompress(self.sig), zlib.decompress(other.sig)
-                    )
-                ]
-            ).count(b"\x00") / (FunctionFeatures.length * 4)
-        raise TypeError(f"Cannot xor FunctionFeatModel with {type(other)}")
 
 
 @dataclass
@@ -191,6 +184,7 @@ class BinjaFunction(AbstractFunction):
 
 class FeatureExtractor:
     version: str
+    name: str
 
     def extract(self, func: AbstractFunction) -> "FunctionFeatures":
         raise NotImplementedError
@@ -243,7 +237,7 @@ class BinjaFeatureExtractor(FeatureExtractor):
     name = "binja"
 
     def _extract(self, func: BinaryNinjaFunction) -> "FunctionFeatures":
-        return FunctionFeatures(
+        return FunctionFeatures.fromPrimitives(
             extraction_engine=self,
             function=BinjaFunction.fromFunctionRef(func),
             cyclomatic_complexity=compute_cyclomatic_complexity(func),
@@ -466,13 +460,16 @@ class FunctionFeatures:
                 logger.dominator_warning = True
             return x
 
-    class Constants(Feature, list):
+    class Constants(Feature, set):
         length = 64
 
         def asArray(self):
-            return sorted(self[: len(self)])[: min(len(self), self.length)] + [0] * max(
+            return np.array(sorted(self)[: min(len(self), self.length)] + [0] * max(
                 0, self.length - len(self)
-            )
+            ), dtype=np.uint32)
+
+        def serialize(self):
+            return ",".join(str(_) for _ in sorted(self))
 
     class Strings(Feature, list):
         length = 512
@@ -514,10 +511,10 @@ class FunctionFeatures:
 
     extraction_engine: FeatureExtractor
     function: AbstractFunction
-    cyclomatic_complexity: int
-    num_instructions: int
-    num_strings: int
-    max_string_length: int
+    cyclomatic_complexity: CyclomaticComplexity
+    num_instructions: NumInstructions
+    num_strings: NumStrings
+    max_string_length: MaxStringLen
     instruction_histogram: InstructionHistogram
     dominator_signature: DominatorSignature
     vertex_histogram: VertexHistogram
@@ -551,6 +548,10 @@ class FunctionFeatures:
         Constants,
         Strings,
     ]
+
+    @classmethod
+    def fromPrimitives(cls, **kwargs):
+        return cls(**kwargs)
 
     def __post_init__(self):
         if not isinstance(self.instruction_histogram, self.InstructionHistogram):
@@ -609,7 +610,6 @@ class FunctionFeatures:
                 )
             return array
         except Exception as e:
-            breakpoint()
             logger.error(f"Error while creating array for {self.function.name}")
             raise e
 
@@ -623,7 +623,7 @@ class FunctionFeatures:
     ) -> "FunctionFeatures":
         if not len(array) == cls.length:
             raise ValueError(
-                f"Wrong array length {len(array)} != {cls.length} for {function.name}"
+                f"Wrong array length {len(array)} != {cls.length} for {name}"
             )
         return cls(
             extraction_engine=extraction_engine,
@@ -700,7 +700,7 @@ class FunctionFeatures:
     @classmethod
     def fromModel(cls, model: FunctionFeatModel) -> "FunctionFeatures":
         return cls.fromArray(
-            np.frombuffer(zlib.decompress(model.sig), dtype=np.uint32),
+            model.sig,
             model.name,
             model.binary.path,
             extractor_from_name(model.extraction_engine),
@@ -708,10 +708,6 @@ class FunctionFeatures:
 
     def asBytes(self) -> bytes:
         return self.asArray().tobytes()
-
-    @property
-    def signature(self) -> bytes:
-        return zlib.compress(self.asBytes())
 
     def get_feature_dict(self) -> Dict[str, Any]:
         return {
@@ -728,7 +724,7 @@ class FunctionFeatures:
         }
 
     def __hash__(self) -> int:
-        return hash(self.signature)
+        return hash(self.asArray())
 
     def __sub__(self, other):
         if not isinstance(other, FunctionFeatures):
@@ -786,6 +782,14 @@ class BinarySignature:
             Path(model.path),
             [FunctionFeatures.fromModel(f) for f in model.functions],
             extractor_from_name(model.extraction_engine),
+        )
+
+    @classmethod
+    def fromDict(cls, d: Dict[str, Any]) -> "BinarySignature":
+        return cls(
+            Path(d["path"]),
+            [FunctionFeatures.fromDict(f) for f in d["functionFeatureList"]],
+            extractor_from_name(d["extraction_engine"]),
         )
 
     @staticmethod
