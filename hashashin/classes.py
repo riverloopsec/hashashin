@@ -76,7 +76,7 @@ class BinarySigModel(ORM_BASE):
     hash = Column(LargeBinary, unique=True, index=True)
     filename = Column(String, index=True)
     sig = Column(NumpyArray, nullable=False)
-    functions: RelationshipProperty = relationship(
+    functions = relationship(
         "FunctionFeatModel", cascade="all, delete-orphan"
     )
     extraction_engine = Column(String)
@@ -453,7 +453,7 @@ class FunctionFeatures:
         def asArray(self):
             x = split_int_to_uint32(self, pad=self.length, wrap=True)
             # if int(np.ceil(len(bin(self)) / 32)) > self.length:
-            if not logger.dominator_warning and self > 2 ** (self.length * 32):
+            if not getattr(logger, 'dominator_warning', False) and self > 2 ** (self.length * 32):
                 logger.debug(
                     f"Dominator signature too long, truncating {hex(self)} -> {hex(merge_uint32_to_int(x))}"
                 )
@@ -470,6 +470,10 @@ class FunctionFeatures:
 
         def serialize(self):
             return ",".join(str(_) for _ in sorted(self))
+
+        @staticmethod
+        def deserialize(s):
+            return set(int(_) for _ in s.split(","))
 
     class Strings(Feature, list):
         length = 512
@@ -508,6 +512,13 @@ class FunctionFeatures:
                 (0, self.length - len(strings)),
                 "constant",
             )
+
+        def serialize(self):
+            return ",".join(self)
+
+        @staticmethod
+        def deserialize(string):
+            return string.split(",")
 
     extraction_engine: FeatureExtractor
     function: AbstractFunction

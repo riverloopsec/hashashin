@@ -63,7 +63,7 @@ class HashApp:
         return sigs
 
     def match(self, sig: BinarySignature, n: int = 10):
-        raise NotImplementedError
+        return self.repo.match(sig, n)
         # for bs in binaries:
         #     for fn in bs.functionFeatureList:
         #         matches = self.repo.function_repo.match(fn, n)

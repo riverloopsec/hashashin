@@ -11,7 +11,9 @@ def safedocs_demo():
     # take cli arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("step", help="demo step number to run", type=int)
-    parser.add_argument("-x", "--execute", help="execute the demo step", action="store_true")
+    parser.add_argument(
+        "-x", "--execute", help="execute the demo step", action="store_true"
+    )
     args = parser.parse_args()
 
     shell_fmt_str = "$ %s"

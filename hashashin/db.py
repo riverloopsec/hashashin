@@ -57,12 +57,12 @@ class RepositoryType(Enum):
 
 
 class AbstractHashRepository(ABC):
-    def save(self, signature: BinarySignature):
+    def insert(self, signature: BinarySignature):
         raise NotImplementedError
 
     def saveAll(self, sig_list: List[BinarySignature]):
         for sig in sig_list:
-            self.save(sig)
+            self.insert(sig)
 
     def get(self, path: Path) -> Optional[BinarySignature]:
         raise NotImplementedError

@@ -415,7 +415,7 @@ class SQLAlchemyHashRepository(AbstractHashRepository):
             SQLAlchemyFunctionFeatureRepository()
         )
 
-    def save(self, signature: BinarySignature):
+    def insert(self, signature: BinarySignature):
         binary = self.binary_repo.store_signature(signature)
         for feat in signature.functionFeatureList:
             feat.binary_id = binary.id
