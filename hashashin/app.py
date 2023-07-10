@@ -23,12 +23,23 @@ class HashApp:
             return SQLAlchemyHashRepository()
         else:
             raise ValueError(f"Invalid repository type: {repo_type}")
+    
+    @staticmethod
+    def _initialize_logger(level: int = logging.DEBUG):
+        if not logger.hasHandlers():
+            logging.basicConfig(
+                format="%(asctime)s,%(msecs)03d %(levelname)-6s [%(filename)s:%(lineno)d] %(message)s",
+                datefmt="%Y-%m-%d:%H:%M:%S",
+                level=level,
+            )
 
     def __init__(
         self,
         repository: AbstractHashRepository = SQLAlchemyHashRepository(),
         extractor: str = "binja",
+        loglevel: int = logging.DEBUG,
     ):
+        self._initialize_logger(loglevel)
         logger.debug("Making HashApp")
         self.repo: AbstractHashRepository = repository
         self.extractor: FeatureExtractor = FeatureExtractor.from_name(extractor)
@@ -44,10 +55,15 @@ class HashApp:
 
     def hash_dir(self, binary_path: Union[Path, str]) -> list[BinarySignature]:
         binary_path = str2path(binary_path)
+        return [self.hash_file(p) for p in get_binaries(binary_path)]
+
+    def hash_path(self, binary_path: Union[Path, str]) -> list[BinarySignature]:
+        binary_path = str2path(binary_path)
         if binary_path.is_dir():
-            return [self.hash_file(p) for p in get_binaries(binary_path)]
-        else:
-            raise ValueError(f"{binary_path} is not a valid directory.")
+            return self.hash_dir(binary_path)
+        if binary_path.is_file():
+            return [self.hash_file(binary_path)]
+        raise ValueError(f"Invalid path: {binary_path}")
 
     def save(self, binaries: Union[list[BinarySignature], BinarySignature]):
         if isinstance(binaries, BinarySignature):
@@ -77,6 +93,18 @@ class HashApp:
     def match_dir(self, binary_path: Union[Path, str], n: int = 10):
         for b in self.hash_dir(binary_path):
             yield self.match(b, n)
+    
+    @staticmethod
+    def _log_summary(db: AbstractHashRepository, path_filter: str = ""):
+        logger.debug("Printing database summary")
+        num_binaries, num_functions = db.summary(path_filter)
+        msg = f"*{path_filter}*" if path_filter else "all"
+        logger.info(f"Summary for {msg} binary paths:")
+        logger.info(f"\tBinaries: {num_binaries}")
+        logger.info(f"\tFunctions: {num_functions}")
+
+    def log_summary(self):
+        self._log_summary(self.repo)
 
 
 if __name__ == "__main__":

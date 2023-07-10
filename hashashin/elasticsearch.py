@@ -10,7 +10,12 @@ from typing import List, Optional, Union
 from hashashin.classes import FunctionFeatures
 from hashashin.classes import AbstractFunction
 from hashashin.classes import merge_uint32_to_int
+from typing import Tuple
 import base64
+import logging
+import pprint
+
+logger = logging.getLogger(__name__)
 
 
 class ElasticSearchHashRepository(AbstractHashRepository):
@@ -154,9 +159,11 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         )
 
     def insert(self, signature: BinarySignature):
+        body = self.signature2dict(signature)
+        logger.debug(f"Inserting {len(signature.functionFeatureList)} functions from {signature.path}")
         self.client.index(
             index=self.config.index,
-            body=self.signature2dict(signature)
+            body=body
         )
 
     @staticmethod
@@ -200,58 +207,62 @@ class ElasticSearchHashRepository(AbstractHashRepository):
     ) -> List[BinarySignature]:
         for func in signature.functionFeatureList:
             query = {
-                "nested": {
-                    "path": "functions",
+                "function_score": {
                     "query": {
-                        "knn": [
-                            # TODO: Check if this auto-normalizes or if boost should account for size
-                            # TODO: Perform actual analysis to determine boost values
-                            {"field": "functions.cyclomatic_complexity",
-                             "query_vector": func.cyclomatic_complexity,
-                             "k": 5, "boost": 0.9},
-                            {"field": "functions.num_instructions",
-                             "query_vector": func.num_instructions,
-                             "k": 5, "boost": 0.4},
-                            {"field": "functions.num_strings",
-                             "query_vector": func.num_strings,
-                             "k": 5, "boost": 0.3},
-                            {"field": "functions.max_string_length",
-                             "query_vector": func.max_string_length,
-                             "k": 5, "boost": 0.5},
-                            {"field": "functions.instruction_histogram",
-                             "query_vector": func.instruction_histogram,
-                             "k": 5, "boost": 0.5},
-                            {"field": "functions.edge_histogram",
-                             "query_vector": func.edge_histogram,
-                             "k": 5, "boost": 0.5},
-                            {"field": "functions.dominator_signature",
-                             "query_vector": func.dominator_signature.asArray(),
-                             "k": 5, "boost": 0.7},
-                            {"field": "functions.constants",
-                             "query_vector": func.constants.serialize(),
-                             "k": 5, "boost": 0.5},
-                            {"field": "functions.strings",
-                             "query_vector": func.strings.serialize(),
-                             "k": 5, "boost": 0.9},
-                        ]
+                        "match": {
+                            "filename": {
+                                "query": str(signature.path),
+                                "fuzziness": "AUTO",
+                                "operator": "and",
+                            }
+                        }
                     },
+                    "script_score": {
+                        "script": {
+                            "source": "Math.abs(doc.functions.cyclomatic_complexity - params.target)",
+                            "params": {
+                                "target": func.cyclomatic_complexity
+                            }
+                        }
+                    }
+                }
+            }
+            query = {
+                "function_score": {
+                    "functions": [
+                        {
+                            "script_score": {
+                                "script": {
+                                    "source": """
+                                        return Math.abs(params._source["functions"]["cyclomatic_complexity"] - params.target);
+                                    """,
+                                    "params": {
+                                        "target": func.cyclomatic_complexity
+                                    }
+                                }
+                            }
+                        }
+                    ]
                 }
             }
             resp = self.client.search(
                 index=self.config.index,
                 body={
                     "query": query,
-                    "min_score": threshold,
                 },
             )
+            breakpoint()
 
     def drop(self, option: Optional[Union[str, Path]] = None):
         raise NotImplementedError
 
-    def summary(self, path_filter: str = ""):
+    def summary(self, path_filter: str = "") -> Tuple[int, int]:
         if path_filter != "":
             raise NotImplementedError
-        return self.client.count(index=self.config.index)
+        bin_count = self.client.count(index=self.config.index)['count']
+        # TODO: support multi-shard counts
+        func_count = sum([len(s.signature.functionFeatureList) for s in self.getAll()])
+        return bin_count, func_count
 
     def find_closest_match(self, signature: BinarySignature) -> QueryResult:
         query = {

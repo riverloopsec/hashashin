@@ -5,6 +5,7 @@ from hashashin.app import HashApp
 from hashashin.utils import get_binaries
 from hashashin.classes import BinarySignature
 from hashashin.db import RepositoryType
+from hashashin.sqlalchemy import SQLAlchemyHashRepository
 import logging
 from pathlib import Path
 
@@ -24,6 +25,7 @@ def _db_parser(parser: argparse.ArgumentParser):
     db_group = parser.add_argument_group("Database Operations")
     db_group.add_argument(
         "--summary",
+        "--status",
         "-db",
         type=str,
         nargs="?",
@@ -78,7 +80,7 @@ def _app_parser(parser: argparse.ArgumentParser):
         type=str,
         nargs="+",
         metavar="BINARY_PATH",
-        help="Match a binary or directory of binaries against the db.",
+        help="Match a binary or directory of binaries against the db. Pass paths to --save and use --match without args to save and match.",
     )
 
 
@@ -126,12 +128,7 @@ def _db_handler(args: argparse.Namespace, db: AbstractHashRepository) -> bool:
     )
 
     if getattr(args, "summary", None) is not None:
-        logger.debug("Printing database summary")
-        num_binaries, num_functions = db.summary(args.summary)
-        msg = f"*{args.summary}*" if args.summary else "all"
-        logger.info(f"Summary for {msg} binary paths:")
-        logger.info(f"\tBinaries: {num_binaries}")
-        logger.info(f"\tFunctions: {num_functions}")
+        HashApp._log_summary(db, args.summary)
         return False  # Continue execution if summary is printed
     if getattr(args, "drop", None) is not None:
         if not input(f"Confirm drop {args.drop}? [y/N] ").lower().startswith("y"):
@@ -153,12 +150,14 @@ def _demo_handler(args: argparse.Namespace, app: HashApp) -> bool:
     )
 
     if getattr(args, "fast_match", None) is not None:
+        if not isinstance(app.repo, SQLAlchemyHashRepository):
+            raise NotImplementedError
         logger.debug("Fast matching binaries")
         for target in map(Path, args.fast_match):
             if not target.is_file() or len(get_binaries(target, silent=True)) == 0:
                 logger.debug(f"Skipping {target} as it is not a binary")
                 continue
-            hashed_target = app.hash(target)
+            hashed_target = app.hash_path(target)
             if hashed_target is None:
                 logger.error(f"Failed to hash {target}")
                 continue
@@ -184,6 +183,8 @@ def _demo_handler(args: argparse.Namespace, app: HashApp) -> bool:
             )
         return True
     if getattr(args, "robust_match", None) is not None:
+        if not isinstance(app.repo, SQLAlchemyHashRepository):
+            raise NotImplementedError
         logger.debug("Robust matching binaries")
         top5 = app.match(args.robust_match, n=5)
         for target, matches in top5.items():
@@ -210,7 +211,7 @@ def hash_binaries(binaries: list[str], app: HashApp) -> list[BinarySignature]:
             logger.debug(f"Skipping {target} as it is not a binary")
             continue
         logger.info(f"Hashing {target}")
-        bins.extend(app.hash(target))
+        bins.extend(app.hash_path(target))
     return bins
 
 
@@ -224,6 +225,7 @@ def _app_handler(args: argparse.Namespace, app: HashApp) -> bool:
         )
     )
 
+    hash_bins = list()
     if getattr(args, "hash", None) is not None:
         logger.info(
             f"Saving {len(hash_bins := hash_binaries(args.hash, app))} binaries to db."
@@ -232,12 +234,19 @@ def _app_handler(args: argparse.Namespace, app: HashApp) -> bool:
 
     if getattr(args, "match", None) is not None:
         logger.debug("Matching binaries")
-        match_bins = app.hash(args.match)
-        if getattr(args, "hash", None) is not None:
-            logger.info(f"Saving {len(match_bins)} binaries to db.")
-            app.save(match_bins)
-        top10 = app.match(match_bins, n=10)
-        raise NotImplementedError
+        match_bins = list()
+        for target in map(Path, args.match):
+            match_bins.extend(app.hash_path(target))
+        matches = list()
+        for target in hash_bins + match_bins:
+            matches.append(app.match(target))
+            logger.info(
+                f"Matched {target.path}:\n"
+                + "\n".join(
+                    [f"\t{match.path}: {target ^ match.sig}" for match in matches]
+                )
+                + "\n"
+            )
 
     return bool(args.match or args.hash)
 
@@ -245,17 +254,15 @@ def _app_handler(args: argparse.Namespace, app: HashApp) -> bool:
 def cli_handler(
     args: argparse.Namespace,
     parser: Optional[argparse.ArgumentParser] = None,
+    app: Optional[HashApp] = None,
 ):
     validate_args(args, parser)
 
     level = logging.DEBUG if getattr(args, "debug", False) else logging.INFO
-    logging.basicConfig(
-        format="%(asctime)s,%(msecs)03d %(levelname)-6s [%(filename)s:%(lineno)d] %(message)s",
-        datefmt="%Y-%m-%d:%H:%M:%S",
-        level=level,
-    )
+    HashApp._initialize_logger(level)
 
-    app = HashApp.from_type(RepositoryType.SQLALCHEMY, extractor="binja")
+    if app is None:
+        app = HashApp.from_type(RepositoryType.SQLALCHEMY, extractor="binja")
 
     if _db_handler(args, app.repo):
         return

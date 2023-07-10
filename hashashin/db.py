@@ -78,7 +78,7 @@ class AbstractHashRepository(ABC):
     def drop(self, option: Optional[Union[str, Path]] = None):
         raise NotImplementedError
 
-    def summary(self, path_filter: str = ""):
+    def summary(self, path_filter: str = "") -> Tuple[int, int]:
         raise NotImplementedError
 
     def __len__(self):
