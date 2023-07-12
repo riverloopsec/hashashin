@@ -439,6 +439,9 @@ class FunctionFeatures:
         def __repr__(self):
             return "|".join(str(x) for x in self)
 
+        def asArray(self):
+            return np.array(self, dtype=np.uint32)
+
     class DominatorSignature(Feature, int):
         length = 32
 

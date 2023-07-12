@@ -84,75 +84,94 @@ class ElasticSearchHashRepository(AbstractHashRepository):
     def create(self, shards=1, replicas=0):
         # TODO: add extraction engine
         if self.index_exists:
-            raise Exception(f"Index {self.config.index} already exists")
-        self.client.indices.create(
-            index=self.config.index,
-            body={
-                "settings": {
-                    "number_of_shards": shards,
-                    "number_of_replicas": replicas
-                },
-                "mappings": {
-                    "properties": {
-                        "binary": {
-                            "properties": {
-                                "filename": {"type": "text"},
-                                "hash": {"type": "keyword", "index": True},
-                                "signature": {
-                                    "type": "dense_vector",
-                                    "dims": BinarySignature.SIGNATURE_LEN,
-                                    "index": True,
-                                    "similarity": "l2_norm",
-                                },
-                                "extraction_engine": {"type": "keyword"},
-                            }
-                        },
-                        # need to manually type properties you want to search over
-                        "signature": {
-                            "type": "dense_vector",
-                                    "dims": BinarySignature.SIGNATURE_LEN,
-                                    "index": True,
-                                    "similarity": "l2_norm",
-                        },
-                        "function": {
-                            "properties": {
-                                "name": {"type": "keyword"},
-                                "cyclomatic_complexity": {"type": "integer"},
-                                "num_instructions": {"type": "integer"},
-                                "num_strings": {"type": "integer"},
-                                "max_string_length": {"type": "integer"},
-                                "instruction_histogram": {
-                                    "type": "dense_vector",
-                                    "dims": FunctionFeatures.InstructionHistogram.length,
-                                },
-                                "edge_histogram": {
-                                    "type": "dense_vector",
-                                    "dims": FunctionFeatures.EdgeHistogram.length,
-                                },
-                                "vertex_histogram": {
-                                    "type": "dense_vector",
-                                    "dims": FunctionFeatures.VertexHistogram.length,
-                                },
-                                "dominator_signature": {
-                                    "type": "unsigned_long",
-                                },
-                                "constants": {
-                                    "type": "keyword", "ignore_above": 256,
-                                },
-                                "strings": {
-                                    "type": "keyword", "ignore_above": 256,
-                                },
-                            }
-                        },
-                        "bin_fn_relation": {
-                            "type": "join",
-                            "relations": {
-                                "binary": "function",
-                            }
+            raise ValueError(f"Index {self.config.index} already exists")
+        body = {
+            "settings": {
+                "number_of_shards": shards,
+                "number_of_replicas": replicas
+            },
+            "mappings": {
+                "properties": {
+                    "binary": {
+                        "properties": {
+                            "filename": {"type": "text"},
+                            "hash": {"type": "keyword", "index": True},
+                            "signature": {
+                                "type": "dense_vector",
+                                "dims": BinarySignature.SIGNATURE_LEN,
+                                "index": True,
+                                "similarity": "cosine",
+                            },
+                            "extraction_engine": {"type": "keyword"},
+                        }
+                    },
+                    "function": {
+                        "properties": {
+                            "name": {"type": "keyword"},
+                            "cyclomatic_complexity":
+                                {"type": "dense_vector", "dims": 1, "index": True, "similarity": "l2_norm"},
+                            "num_instructions":
+                                {"type": "dense_vector", "dims": 1, "index": True, "similarity": "l2_norm"},
+                            "num_strings":
+                                {"type": "dense_vector", "dims": 1, "index": True, "similarity": "l2_norm"},
+                            "max_string_length":
+                                {"type": "dense_vector", "dims": 1, "index": True, "similarity": "l2_norm"},
+                            "instruction_histogram": {
+                                "type": "dense_vector",
+                                "dims": FunctionFeatures.InstructionHistogram.length,
+                                "index": True,
+                                "similarity": "l2_norm",
+                            },
+                            "edge_histogram": {
+                                "type": "dense_vector",
+                                "dims": FunctionFeatures.EdgeHistogram.length,
+                                "index": True,
+                                "similarity": "l2_norm",
+                            },
+                            "vertex_histogram": {
+                                "type": "dense_vector",
+                                "dims": FunctionFeatures.VertexHistogram.length,
+                                "index": True,
+                                "similarity": "l2_norm",
+                            },
+                            "dominator_signature": {
+                                "type": "dense_vector",
+                                "dims": FunctionFeatures.DominatorSignature.length,
+                                "index": True,
+                                "similarity": "l2_norm",
+                            },
+                            "constants": {
+                                "type": "keyword", "ignore_above": 256,
+                            },
+                            "strings": {
+                                "type": "keyword", "ignore_above": 256,
+                            },
+                        }
+                    },
+                    "bin_fn_relation": {
+                        "type": "join",
+                        "relations": {
+                            "binary": "function",
                         }
                     }
                 }
             }
+        }
+        # Add properties to flat hierarchy for searching
+        search_properties = [
+            "signature", "cyclomatic_complexity", "num_instructions", "num_strings", "max_string_length",
+            "instruction_histogram", "edge_histogram", "vertex_histogram", "dominator_signature"
+        ]
+        for prop in search_properties:
+            if prop in body["mappings"]["properties"]:
+                logger.warning(f"Property {prop} already exists in mapping, not overwriting")
+                continue
+            mapping = body["mappings"]["properties"]["binary"]["properties"].get(prop, {}) | body["mappings"]["properties"]["function"]["properties"].get(prop, {})
+            body["mappings"]["properties"][prop] = mapping
+
+        self.client.indices.create(
+            index=self.config.index,
+            body=body,
         )
 
     def delete_index(self):
@@ -169,14 +188,14 @@ class ElasticSearchHashRepository(AbstractHashRepository):
             "functions": [
                 {
                     "name": f.function.name,
-                    "cyclomatic_complexity": f.cyclomatic_complexity,
-                    "num_instructions": f.num_instructions,
-                    "num_strings": f.num_strings,
-                    "max_string_length": f.max_string_length,
-                    "instruction_histogram": f.instruction_histogram,
+                    "cyclomatic_complexity": [f.cyclomatic_complexity],
+                    "num_instructions": [f.num_instructions],
+                    "num_strings": [f.num_strings],
+                    "max_string_length": [f.max_string_length],
+                    "instruction_histogram": list(f.instruction_histogram.asArray()),
                     "edge_histogram": f.edge_histogram,
                     "vertex_histogram": f.vertex_histogram,
-                    "dominator_signature": f.dominator_signature.asArray(),
+                    "dominator_signature": list(f.dominator_signature.asArray()),
                     "constants": f.constants.serialize(),
                     "strings": f.strings.serialize(),
                 }
@@ -224,6 +243,19 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         )
         bin_id = resp["_id"]
 
+        # for fdict in functions:
+        #     q_body = {
+        #         "index": self.config.index,
+        #         "body": fdict | {"bin_fn_relation": {"name": "function", "parent": bin_id}},
+        #         "routing": bin_id,
+        #     }
+        #     try:
+        #         self.client.index(**q_body)
+        #     except Exception as e:
+        #         logger.error(e)
+        #         breakpoint()
+        #         print(e)
+        #         raise e
         # insert functions
         bulk_requests = [{
             "_index": self.config.index,
@@ -278,58 +310,35 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         )["hits"]["hits"]]
 
     def match(
-        self, signature: BinarySignature, threshold: int
-    ) -> List[BinarySignature]:
+        self, signature: BinarySignature, num_matches: int
+    ) -> List[QueryResult]:
+        match_counts = dict()
         for func in signature.functionFeatureList:
             query = {
-                "function_score": {
-                    "query": {
-                        "match": {
-                            "filename": {
-                                "query": str(signature.path),
-                                "fuzziness": "AUTO",
-                                "operator": "and",
-                            }
-                        }
-                    },
-                    "script_score": {
-                        "script": {
-                            "source": "Math.abs(doc.functions.cyclomatic_complexity - params.target)",
-                            "params": {
-                                "target": func.cyclomatic_complexity
-                            }
-                        }
-                    }
-                }
-            }
-            query = {
-                "function_score": {
-                    "functions": [
-                        {
-                            "script_score": {
-                                "script": {
-                                    "source": """
-                                        return Math.abs(params._source["functions"]["cyclomatic_complexity"] - params.target);
-                                    """,
-                                    "params": {
-                                        "target": func.cyclomatic_complexity
-                                    }
-                                }
-                            }
-                        }
-                    ]
-                }
+                "field": "dominator_signature",
+                "query_vector": func.dominator_signature.asArray(),
+                "k": 5,
+                "num_candidates": 1000
             }
             resp = self.client.search(
                 index=self.config.index,
-                body={
-                    "query": query,
-                },
+                knn=query,
             )
-            breakpoint()
+
+            scores = dict()
+            for hit in resp["hits"]["hits"]:
+                scores[hit["_routing"]] = scores.get(hit["_routing"], 0) + hit["_score"]
+            best_match = max(scores, key=scores.get)
+            match_counts[best_match] = match_counts.get(best_match, 0) + 1
+
+        logger.debug(f"Matched: {match_counts}")
+        return match_counts
 
     def drop(self, option: Optional[Union[str, Path]] = None):
-        raise NotImplementedError
+        if option is None:
+            self.delete_index()
+        else:
+            raise NotImplementedError
 
     def summary(self, path_filter: str = "") -> Tuple[int, int]:
         if path_filter != "":
