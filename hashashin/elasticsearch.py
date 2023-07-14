@@ -385,7 +385,7 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         logger.debug(f"Scores: {scores}")
         return [
             self.QueryResult(score=s, signature=self.get(b))
-            for b, s in scores.items()
+            for b, s in sorted(scores.items(), key=lambda x: x[1], reverse=True)
             if b in binaries
         ]
 
