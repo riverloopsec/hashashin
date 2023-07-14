@@ -76,9 +76,7 @@ class BinarySigModel(ORM_BASE):
     hash = Column(LargeBinary, unique=True, index=True)
     filename = Column(String, index=True)
     sig = Column(NumpyArray, nullable=False)
-    functions = relationship(
-        "FunctionFeatModel", cascade="all, delete-orphan"
-    )
+    functions = relationship("FunctionFeatModel", cascade="all, delete-orphan")
     extraction_engine = Column(String)
 
     @classmethod
@@ -456,7 +454,9 @@ class FunctionFeatures:
         def asArray(self):
             x = split_int_to_uint32(self, pad=self.length, wrap=True)
             # if int(np.ceil(len(bin(self)) / 32)) > self.length:
-            if not getattr(logger, 'dominator_warning', False) and self > 2 ** (self.length * 32):
+            if not getattr(logger, "dominator_warning", False) and self > 2 ** (
+                self.length * 32
+            ):
                 logger.debug(
                     f"Dominator signature too long, truncating {hex(self)} -> {hex(merge_uint32_to_int(x))}"
                 )
@@ -467,9 +467,11 @@ class FunctionFeatures:
         length = 64
 
         def asArray(self):
-            return np.array(sorted(self)[: min(len(self), self.length)] + [0] * max(
-                0, self.length - len(self)
-            ), dtype=np.uint32)
+            return np.array(
+                sorted(self)[: min(len(self), self.length)]
+                + [0] * max(0, self.length - len(self)),
+                dtype=np.uint32,
+            )
 
         def serialize(self):
             return ",".join(str(_) for _ in sorted(self))
@@ -754,16 +756,24 @@ class FunctionFeatures:
     def fromSerializedDict(cls, d: Dict[str, Any], engine: Optional[str]):
         if "static_properties" not in d:
             raise ValueError(f"Missing static properties in {d}")
-        if max(d["static_properties"]) >= 2 ** 32:
-            raise ValueError(f"Static properties must fit in uint32, got {d['static_properties']}")
+        if max(d["static_properties"]) >= 2**32:
+            raise ValueError(
+                f"Static properties must fit in uint32, got {d['static_properties']}"
+            )
         if min(d["static_properties"]) < 0:
-            raise ValueError(f"Static properties must be positive, got {d['static_properties']}")
+            raise ValueError(
+                f"Static properties must be positive, got {d['static_properties']}"
+            )
         try:
-            array = np.concatenate([
+            array = np.concatenate(
+                [
                     d["static_properties"],
                     cls.Constants.fromSerialized(d["constants"]).asArray(),
-                    cls.Strings.fromSerialized(d["strings"]).asArray()
-                ], casting="unsafe", dtype=np.uint32)
+                    cls.Strings.fromSerialized(d["strings"]).asArray(),
+                ],
+                casting="unsafe",
+                dtype=np.uint32,
+            )
         except Exception as e:
             breakpoint()
             logger.error(f"Error while creating array for {d['name']}")
@@ -773,7 +783,9 @@ class FunctionFeatures:
             array=array,
             name=d["name"],
             function=AbstractFunction(name=d["name"], _function=None),
-            extraction_engine=extractor_from_name(engine) if engine else BinjaFeatureExtractor(),
+            extraction_engine=extractor_from_name(engine)
+            if engine
+            else BinjaFeatureExtractor(),
         )
 
     def asBytes(self) -> bytes:

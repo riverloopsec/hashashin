@@ -26,7 +26,7 @@ class HashApp:
             return SQLAlchemyHashRepository()
         else:
             raise ValueError(f"Invalid repository type: {repo_type}")
-    
+
     @staticmethod
     def _initialize_logger(level: int = logging.DEBUG):
         if not logger.hasHandlers():
@@ -93,9 +93,9 @@ class HashApp:
             #     out.extend(ret)
             # return out
         for target in map(Path, bins):
-            if not target.is_file() and \
-                    not (target.is_dir() and
-                         len(get_binaries(target, progress=True)) > 0):
+            if not target.is_file() and not (
+                target.is_dir() and len(get_binaries(target, progress=True)) > 0
+            ):
                 logger.debug(f"Skipping {target} as it is not a binary")
                 continue
             logger.info(f"Hashing {target}")
@@ -130,7 +130,7 @@ class HashApp:
     def match_dir(self, binary_path: Union[Path, str], n: int = 10):
         for b in self.hash_dir(binary_path):
             yield self.match(b, n)
-    
+
     @staticmethod
     def _log_summary(db: AbstractHashRepository, path_filter: str = ""):
         logger.debug("Printing database summary")
