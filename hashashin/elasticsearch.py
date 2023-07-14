@@ -314,7 +314,7 @@ class ElasticSearchHashRepository(AbstractHashRepository):
                         "has_child": {
                             "type": "function",
                             "query": {"match_all": {}},
-                            "inner_hits": {"from": 0, "size": 100},
+                            "inner_hits": {"from": 0, "size": 1000},
                         }
                     }
                 },
@@ -337,34 +337,23 @@ class ElasticSearchHashRepository(AbstractHashRepository):
     def match(
         self, signature: BinarySignature, num_matches: int = 5
     ) -> List[QueryResult]:
-        # TODO: batchify
-        # {bin_id: [(score, func, hit)]}
-        # matches: dict[list[int, FunctionFeatures, dict]] = dict()
+        searches = list()
+        for func in filter(lambda f: f.cyclomatic_complexity > 1, signature.functionFeatureList):
+            searches.append({"index": self.config.index})
+            searches.append({
+                    "knn": {
+                        "field": "static_properties",
+                        "query_vector": func.static_properties,
+                        "k": 5,
+                        "num_candidates": 1000,
+                    }
+                })
+        response = self.client.msearch(searches=searches)
+
         match_counts = dict()
         scores = dict()
-        # max_complexity = max(
-        #     signature.functionFeatureList, key=lambda x: x.cyclomatic_complexity
-        # ).cyclomatic_complexity
-        # for func in signature.functionFeatureList:
-        # for func in sorted(signature.functionFeatureList, key=lambda f: f.cyclomatic_complexity, reverse=True)[:200]:
-        for func in filter(lambda f: f.cyclomatic_complexity > 1, signature.functionFeatureList):
-            # TODO: factor in cyclomatic complexity into scoring
-            # complexity_weight = func.cyclomatic_complexity / max_complexity
-            query = {
-                "field": "static_properties",
-                "query_vector": func.static_properties,
-                "k": 5,
-                "num_candidates": 1000,
-            }
-            resp = self.client.search(
-                index=self.config.index,
-                knn=query,
-            )
+        for resp in response["responses"]:
             hits = resp["hits"]["hits"]
-            # hits_hamming = list(map(lambda x:
-            #   self.hamming_distance(func.static_properties, x["_source"]["static_properties"]), hits))
-            # hits_matches = list(map(lambda x: x["_routing"], hits))
-            # hits_scores = list(map(lambda x: x["_score"], hits))
             closest_hits = list(
                 filter(
                     lambda h: h["_score"]
@@ -383,30 +372,15 @@ class ElasticSearchHashRepository(AbstractHashRepository):
                     FunctionFeatures.Strings.fromSerialized(h["_source"]["strings"])
                     ^ func.strings
                 ),
-
             )
             match_counts[closest_hit["_routing"]] = match_counts.get(closest_hit["_routing"], 0) + 1
             scores[closest_hit["_routing"]] = scores.get(closest_hit["_routing"], 0) + closest_hit["_score"]
-
-            # for hit in closest_hits:
-            #     # TODO: maybe include weights for each function by cyclomatic complexity
-            #     # would just need to store scores in a list instead of rolling average
-            #     matches[hit["_routing"]] = matches.get(hit["_routing"], []) + [
-            #         (hit["_score"], func, hit)
-            #     ]
-            #
-            #     # scores[hit["_routing"]] = (scores.get(
-            #     #     hit["_routing"], 0
-            #     # ) * match_counts.get(hit["_routing"], 0) + hit["_score"]) / (
-            #     #     match_counts.get(hit["_routing"], 0) + 1
-            #     # )
-            #     # match_counts[hit["_routing"]] = match_counts.get(hit["_routing"], 0) + 1
             logger.debug(match_counts)
             logger.debug(scores)
 
-        binaries = sorted(match_counts,
-                          key=lambda k: match_counts[k],
-                          reverse=True)[:num_matches]
+        binaries = sorted(match_counts, key=lambda k: match_counts[k], reverse=True)[
+            :num_matches
+        ]
         for s in scores:
             scores[s] = (scores[s]) / sum(match_counts.values())
         logger.debug(f"Matched: {match_counts}")

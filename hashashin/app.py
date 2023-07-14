@@ -47,7 +47,7 @@ class HashApp:
         logger.debug("Making HashApp")
         self.repo: AbstractHashRepository = repository
         self.extractor: FeatureExtractor = FeatureExtractor.from_name(extractor)
-        self._pool = Pool(processes=multiprocessing) if multiprocessing else False
+        self._pool = Pool(processes=multiprocessing) if multiprocessing else None
 
     @classmethod
     def from_type(cls, repo_type: RepositoryType, extractor: str = "binja"):
