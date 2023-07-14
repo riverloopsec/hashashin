@@ -12,6 +12,7 @@ from typing import List, Optional, Union
 from hashashin.classes import FunctionFeatures
 from hashashin.classes import AbstractFunction
 from hashashin.classes import merge_uint32_to_int
+from hashashin.utils import normalize, random_max
 from typing import Tuple
 import base64
 import logging
@@ -34,7 +35,7 @@ class ElasticSearchHashRepository(AbstractHashRepository):
     class QueryResult:
         score: float
         signature: Optional[BinarySignature]
-        function: Optional[FunctionFeatures]
+        function: Optional[FunctionFeatures] = None
 
         @classmethod
         def from_hit(cls, hit: dict):
@@ -43,35 +44,52 @@ class ElasticSearchHashRepository(AbstractHashRepository):
             if hit["_source"]["bin_fn_relation"]["name"] == "binary":
                 binary_dict = hit["_source"]
                 binary_dict["functions"] = list()
-                for func in hit.get("inner_hits", {}).get("function", {}).get("hits", {}).get("hits", []):
+                for func in (
+                    hit.get("inner_hits", {})
+                    .get("function", {})
+                    .get("hits", {})
+                    .get("hits", [])
+                ):
                     if "_source" not in func:
                         raise Exception("Invalid function hit")
                     source = func["_source"]
-                    if source.get("bin_fn_relation", {}).get("parent") != hit.get("_id"):
+                    if source.get("bin_fn_relation", {}).get("parent") != hit.get(
+                        "_id"
+                    ):
                         raise Exception("Invalid function hit")
                     binary_dict["functions"].append(source)
                 if len(binary_dict["functions"]) != 0 and (
-                    hit["inner_hits"]["function"]["hits"]["total"]["value"] != len(binary_dict["functions"])
+                    hit["inner_hits"]["function"]["hits"]["total"]["value"]
+                    != len(binary_dict["functions"])
                 ):
                     # TODO: just go get the rest of them you lazy bum
-                    raise ValueError("Pagination problem with inner_hits query. Increase size.")
+                    raise ValueError(
+                        "Pagination problem with inner_hits query. Increase size."
+                    )
                 return cls(
                     score=hit["_score"],
                     signature=ElasticSearchHashRepository.dict2signature(binary_dict),
-                    function=None
+                    function=None,
                 )
             elif hit["_source"]["bin_fn_relation"]["name"] == "function":
                 return cls(
                     score=hit["_score"],
                     signature=None,
-                    function=ElasticSearchHashRepository.dict2function(hit["_source"], str(BinjaFeatureExtractor()))
+                    function=ElasticSearchHashRepository.dict2function(
+                        hit["_source"], str(BinjaFeatureExtractor())
+                    ),
                 )
 
     def __init__(self, config: ESHashRepoConfig):
         self.config = config
-        http, http_auth = ("http", None) if not (config.user and config.password) \
+        http, http_auth = (
+            ("http", None)
+            if not (config.user and config.password)
             else ("https", (config.user, config.password))
-        self.client = Elasticsearch(hosts=f"{http}://{self.config.host}:{self.config.port}", http_auth=http_auth)
+        )
+        self.client = Elasticsearch(
+            hosts=f"{http}://{self.config.host}:{self.config.port}", http_auth=http_auth
+        )
 
     @classmethod
     def from_kwargs(cls, **kwargs):
@@ -86,10 +104,7 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         if self.index_exists:
             raise ValueError(f"Index {self.config.index} already exists")
         body = {
-            "settings": {
-                "number_of_shards": shards,
-                "number_of_replicas": replicas
-            },
+            "settings": {"number_of_shards": shards, "number_of_replicas": replicas},
             "mappings": {
                 "properties": {
                     "binary": {
@@ -100,7 +115,7 @@ class ElasticSearchHashRepository(AbstractHashRepository):
                                 "type": "dense_vector",
                                 "dims": BinarySignature.SIGNATURE_LEN,
                                 "index": True,
-                                "similarity": "cosine",
+                                "similarity": "dot_product",
                             },
                             "extraction_engine": {"type": "keyword"},
                         }
@@ -108,43 +123,19 @@ class ElasticSearchHashRepository(AbstractHashRepository):
                     "function": {
                         "properties": {
                             "name": {"type": "keyword"},
-                            "cyclomatic_complexity":
-                                {"type": "dense_vector", "dims": 1, "index": True, "similarity": "l2_norm"},
-                            "num_instructions":
-                                {"type": "dense_vector", "dims": 1, "index": True, "similarity": "l2_norm"},
-                            "num_strings":
-                                {"type": "dense_vector", "dims": 1, "index": True, "similarity": "l2_norm"},
-                            "max_string_length":
-                                {"type": "dense_vector", "dims": 1, "index": True, "similarity": "l2_norm"},
-                            "instruction_histogram": {
+                            "static_properties": {
                                 "type": "dense_vector",
-                                "dims": FunctionFeatures.InstructionHistogram.length,
+                                "dims": FunctionFeatures.static_length,  # 175
                                 "index": True,
-                                "similarity": "l2_norm",
-                            },
-                            "edge_histogram": {
-                                "type": "dense_vector",
-                                "dims": FunctionFeatures.EdgeHistogram.length,
-                                "index": True,
-                                "similarity": "l2_norm",
-                            },
-                            "vertex_histogram": {
-                                "type": "dense_vector",
-                                "dims": FunctionFeatures.VertexHistogram.length,
-                                "index": True,
-                                "similarity": "l2_norm",
-                            },
-                            "dominator_signature": {
-                                "type": "dense_vector",
-                                "dims": FunctionFeatures.DominatorSignature.length,
-                                "index": True,
-                                "similarity": "l2_norm",
+                                "similarity": "cosine",
                             },
                             "constants": {
-                                "type": "keyword", "ignore_above": 256,
+                                "type": "keyword",
+                                "ignore_above": 256,
                             },
                             "strings": {
-                                "type": "keyword", "ignore_above": 256,
+                                "type": "keyword",
+                                "ignore_above": 256,
                             },
                         }
                     },
@@ -152,21 +143,27 @@ class ElasticSearchHashRepository(AbstractHashRepository):
                         "type": "join",
                         "relations": {
                             "binary": "function",
-                        }
-                    }
+                        },
+                    },
                 }
-            }
+            },
         }
         # Add properties to flat hierarchy for searching
         search_properties = [
-            "signature", "cyclomatic_complexity", "num_instructions", "num_strings", "max_string_length",
-            "instruction_histogram", "edge_histogram", "vertex_histogram", "dominator_signature"
+            "signature",
+            "static_properties",
+            # "cyclomatic_complexity", "num_instructions", "num_strings", "max_string_length",
+            # "instruction_histogram", "edge_histogram", "vertex_histogram", "dominator_signature"
         ]
         for prop in search_properties:
             if prop in body["mappings"]["properties"]:
-                logger.warning(f"Property {prop} already exists in mapping, not overwriting")
+                logger.warning(
+                    f"Property {prop} already exists in mapping, not overwriting"
+                )
                 continue
-            mapping = body["mappings"]["properties"]["binary"]["properties"].get(prop, {}) | body["mappings"]["properties"]["function"]["properties"].get(prop, {})
+            mapping = body["mappings"]["properties"]["binary"]["properties"].get(
+                prop, {}
+            ) | body["mappings"]["properties"]["function"]["properties"].get(prop, {})
             body["mappings"]["properties"][prop] = mapping
 
         self.client.indices.create(
@@ -184,18 +181,19 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         return {
             "filename": str(signature.path),
             "hash": str(base64.b64encode(signature.binary_hash)),
-            "signature": signature.signature,
+            "signature": normalize(signature.signature),
             "functions": [
                 {
                     "name": f.function.name,
-                    "cyclomatic_complexity": [f.cyclomatic_complexity],
-                    "num_instructions": [f.num_instructions],
-                    "num_strings": [f.num_strings],
-                    "max_string_length": [f.max_string_length],
-                    "instruction_histogram": list(f.instruction_histogram.asArray()),
-                    "edge_histogram": f.edge_histogram,
-                    "vertex_histogram": f.vertex_histogram,
-                    "dominator_signature": list(f.dominator_signature.asArray()),
+                    # "cyclomatic_complexity": [f.cyclomatic_complexity],
+                    # "num_instructions": [f.num_instructions],
+                    # "num_strings": [f.num_strings],
+                    # "max_string_length": [f.max_string_length],
+                    # "instruction_histogram": list(f.instruction_histogram.asArray()),
+                    # "edge_histogram": f.edge_histogram,
+                    # "vertex_histogram": f.vertex_histogram,
+                    # "dominator_signature": list(f.dominator_signature.asArray()),
+                    "static_properties": f.static_properties,
                     "constants": f.constants.serialize(),
                     "strings": f.strings.serialize(),
                 }
@@ -206,20 +204,21 @@ class ElasticSearchHashRepository(AbstractHashRepository):
 
     @staticmethod
     def dict2function(f: dict, engine: str) -> FunctionFeatures:
-        return FunctionFeatures.fromPrimitives(
-            cyclomatic_complexity=f["cyclomatic_complexity"],
-            num_instructions=f["num_instructions"],
-            num_strings=f["num_strings"],
-            max_string_length=f["max_string_length"],
-            instruction_histogram=f["instruction_histogram"],
-            edge_histogram=f["edge_histogram"],
-            vertex_histogram=f["vertex_histogram"],
-            dominator_signature=merge_uint32_to_int(f["dominator_signature"]),
-            constants=FunctionFeatures.Constants.deserialize(f["constants"]),
-            strings=FunctionFeatures.Strings.deserialize(f["strings"]),
-            extraction_engine=extractor_from_name(engine),
-            function=AbstractFunction(name=f["name"], _function=None)
-        )
+        return FunctionFeatures.fromSerializedDict(d=f, engine=engine)
+        # return FunctionFeatures.fromPrimitives(
+        #     cyclomatic_complexity=f["cyclomatic_complexity"],
+        #     num_instructions=f["num_instructions"],
+        #     num_strings=f["num_strings"],
+        #     max_string_length=f["max_string_length"],
+        #     instruction_histogram=f["instruction_histogram"],
+        #     edge_histogram=f["edge_histogram"],
+        #     vertex_histogram=f["vertex_histogram"],
+        #     dominator_signature=merge_uint32_to_int(f["dominator_signature"]),
+        #     constants=FunctionFeatures.Constants.deserialize(f["constants"]),
+        #     strings=FunctionFeatures.Strings.deserialize(f["strings"]),
+        #     extraction_engine=extractor_from_name(engine),
+        #     function=AbstractFunction(name=f["name"], _function=None)
+        # )
 
     @staticmethod
     def dict2signature(source: dict) -> BinarySignature:
@@ -227,44 +226,39 @@ class ElasticSearchHashRepository(AbstractHashRepository):
             path=Path(source["filename"]),
             cached_signature=np.array(source["signature"]),
             functionFeatureList=[
-                ElasticSearchHashRepository.dict2function(f, source["extraction_engine"])
-                for f in source["functions"]],
-            extraction_engine=extractor_from_name(source["extraction_engine"])
+                ElasticSearchHashRepository.dict2function(
+                    f, source["extraction_engine"]
+                )
+                for f in source["functions"]
+            ],
+            extraction_engine=extractor_from_name(source["extraction_engine"]),
         )
 
     def insert(self, signature: BinarySignature):
-        logger.debug(f"Inserting {len(signature.functionFeatureList)} functions from {signature.path}")
+        logger.debug(
+            f"Inserting {len(signature.functionFeatureList)} functions from {signature.path}"
+        )
         body = self.signature2dict(signature)
         functions = body.pop("functions")
         # insert binary
         resp = self.client.index(
-            index=self.config.index,
-            body=body | {"bin_fn_relation": {"name": "binary"}}
+            index=self.config.index, body=body | {"bin_fn_relation": {"name": "binary"}}
         )
         bin_id = resp["_id"]
 
-        # for fdict in functions:
-        #     q_body = {
-        #         "index": self.config.index,
-        #         "body": fdict | {"bin_fn_relation": {"name": "function", "parent": bin_id}},
-        #         "routing": bin_id,
-        #     }
-        #     try:
-        #         self.client.index(**q_body)
-        #     except Exception as e:
-        #         logger.error(e)
-        #         breakpoint()
-        #         print(e)
-        #         raise e
         # insert functions
-        bulk_requests = [{
-            "_index": self.config.index,
-            "_source": fdict | {"bin_fn_relation": {"name": "function", "parent": bin_id}},
-            "_routing": bin_id,
-            "_op_type": "index",
-        } for fdict in functions]
+        bulk_requests = [
+            {
+                "_index": self.config.index,
+                "_source": fdict
+                | {"bin_fn_relation": {"name": "function", "parent": bin_id}},
+                "_routing": bin_id,
+                "_op_type": "index",
+            }
+            for fdict in functions
+        ]
         resp = helpers.bulk(self.client, bulk_requests)
-        logger.debug(resp)
+        logger.debug(f"Bulk response: {resp}")
 
     @staticmethod
     def dict2model(source: dict) -> BinarySigModel:
@@ -282,57 +276,146 @@ class ElasticSearchHashRepository(AbstractHashRepository):
                     edge_histogram=f["edge_histogram"],
                     dominator_signature=f["dominator_signature"],
                     constants=FunctionFeatures.Constants.deserialize(f["constants"]),
-                    strings=FunctionFeatures.Strings.deserialize(f["strings"])
+                    strings=FunctionFeatures.Strings.deserialize(f["strings"]),
                 )
                 for f in source["functions"]
             ],
         )
 
-    def get(self, path: Path) -> Optional[BinarySignature]:
-        raise NotImplementedError
-
-    def getAll(self, max_hits=10000) -> List[QueryResult]:
-        return [self.QueryResult.from_hit(hit) for hit in self.client.search(
+    def get(self, doc_id: str) -> Optional[BinarySignature]:
+        resp = self.client.get(index=self.config.index, id=doc_id)
+        if not resp["found"]:
+            return None
+        src = resp["_source"]
+        parent_id = resp["_id"]
+        # get functions associated with parent_id
+        resp = self.client.search(
             index=self.config.index,
             body={
                 "query": {
-                    "has_child": {
-                        "type": "function",
-                        "query": {"match_all": {}},
-                        "inner_hits": {
-                            "from": 0,
-                            "size": 100
-                        },
+                    "has_parent": {
+                        "parent_type": "binary",
+                        "query": {"ids": {"values": [parent_id]}},
                     }
                 }
             },
-            size=max_hits
-        )["hits"]["hits"]]
+            size=10000,
+        )
+        src["functions"] = list(map(lambda _: _["_source"], resp["hits"]["hits"]))
+        return self.dict2signature(src)
+
+    def getAll(self, max_hits=10000) -> List[QueryResult]:
+        return [
+            self.QueryResult.from_hit(hit)
+            for hit in self.client.search(
+                index=self.config.index,
+                body={
+                    "query": {
+                        "has_child": {
+                            "type": "function",
+                            "query": {"match_all": {}},
+                            "inner_hits": {"from": 0, "size": 100},
+                        }
+                    }
+                },
+                size=max_hits,
+            )["hits"]["hits"]
+        ]
+
+    @staticmethod
+    def cosine_similarity(v1: list, v2: list):
+        if len(v1) != len(v2):
+            raise ValueError("Vectors must be same length")
+        return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+
+    @staticmethod
+    def hamming_distance(v1: list, v2: list):
+        if len(v1) != len(v2):
+            raise ValueError("Vectors must be same length")
+        return sum([1 if v1[i] != v2[i] else 0 for i in range(len(v1))])
 
     def match(
-        self, signature: BinarySignature, num_matches: int
+        self, signature: BinarySignature, num_matches: int = 5
     ) -> List[QueryResult]:
+        # TODO: batchify
+        # {bin_id: [(score, func, hit)]}
+        # matches: dict[list[int, FunctionFeatures, dict]] = dict()
         match_counts = dict()
-        for func in signature.functionFeatureList:
+        scores = dict()
+        # max_complexity = max(
+        #     signature.functionFeatureList, key=lambda x: x.cyclomatic_complexity
+        # ).cyclomatic_complexity
+        # for func in signature.functionFeatureList:
+        # for func in sorted(signature.functionFeatureList, key=lambda f: f.cyclomatic_complexity, reverse=True)[:200]:
+        for func in filter(lambda f: f.cyclomatic_complexity > 1, signature.functionFeatureList):
+            # TODO: factor in cyclomatic complexity into scoring
+            # complexity_weight = func.cyclomatic_complexity / max_complexity
             query = {
-                "field": "dominator_signature",
-                "query_vector": func.dominator_signature.asArray(),
+                "field": "static_properties",
+                "query_vector": func.static_properties,
                 "k": 5,
-                "num_candidates": 1000
+                "num_candidates": 1000,
             }
             resp = self.client.search(
                 index=self.config.index,
                 knn=query,
             )
+            hits = resp["hits"]["hits"]
+            # hits_hamming = list(map(lambda x:
+            #   self.hamming_distance(func.static_properties, x["_source"]["static_properties"]), hits))
+            # hits_matches = list(map(lambda x: x["_routing"], hits))
+            # hits_scores = list(map(lambda x: x["_score"], hits))
+            closest_hits = list(
+                filter(
+                    lambda h: h["_score"]
+                    >= max(hits, key=lambda x: x["_score"])["_score"],
+                    hits,
+                )
+            )
 
-            scores = dict()
-            for hit in resp["hits"]["hits"]:
-                scores[hit["_routing"]] = scores.get(hit["_routing"], 0) + hit["_score"]
-            best_match = max(scores, key=scores.get)
-            match_counts[best_match] = match_counts.get(best_match, 0) + 1
+            closest_hit = random_max(
+                closest_hits,
+                key=lambda h: (
+                    FunctionFeatures.Constants.fromSerialized(h["_source"]["constants"])
+                    ^ func.constants
+                )
+                + (
+                    FunctionFeatures.Strings.fromSerialized(h["_source"]["strings"])
+                    ^ func.strings
+                ),
 
+            )
+            match_counts[closest_hit["_routing"]] = match_counts.get(closest_hit["_routing"], 0) + 1
+            scores[closest_hit["_routing"]] = scores.get(closest_hit["_routing"], 0) + closest_hit["_score"]
+
+            # for hit in closest_hits:
+            #     # TODO: maybe include weights for each function by cyclomatic complexity
+            #     # would just need to store scores in a list instead of rolling average
+            #     matches[hit["_routing"]] = matches.get(hit["_routing"], []) + [
+            #         (hit["_score"], func, hit)
+            #     ]
+            #
+            #     # scores[hit["_routing"]] = (scores.get(
+            #     #     hit["_routing"], 0
+            #     # ) * match_counts.get(hit["_routing"], 0) + hit["_score"]) / (
+            #     #     match_counts.get(hit["_routing"], 0) + 1
+            #     # )
+            #     # match_counts[hit["_routing"]] = match_counts.get(hit["_routing"], 0) + 1
+            logger.debug(match_counts)
+            logger.debug(scores)
+
+        binaries = sorted(match_counts,
+                          key=lambda k: match_counts[k],
+                          reverse=True)[:num_matches]
+        for s in scores:
+            scores[s] = (scores[s]) / sum(match_counts.values())
         logger.debug(f"Matched: {match_counts}")
-        return match_counts
+        logger.debug(f"Scores: {scores}")
+        return [
+            self.QueryResult(score=s, signature=self.get(b))
+            for b, s in scores.items()
+            if b in binaries
+        ]
 
     def drop(self, option: Optional[Union[str, Path]] = None):
         if option is None:
@@ -343,15 +426,19 @@ class ElasticSearchHashRepository(AbstractHashRepository):
     def summary(self, path_filter: str = "") -> Tuple[int, int]:
         if path_filter != "":
             raise NotImplementedError
-        bin_count = self.client.count(index=self.config.index, q="bin_fn_relation:binary")['count']
-        func_count = self.client.count(index=self.config.index, q="bin_fn_relation:function")['count']
+        bin_count = self.client.count(
+            index=self.config.index, q="bin_fn_relation:binary"
+        )["count"]
+        func_count = self.client.count(
+            index=self.config.index, q="bin_fn_relation:function"
+        )["count"]
         # func_count = sum([len(s.signature.functionFeatureList) for s in self.getAll()])
         return bin_count, func_count
 
     def find_closest_by_signature(self, signature: BinarySignature) -> QueryResult:
         query = {
             "field": "signature",
-            "query_vector": signature.signature,
+            "query_vector": normalize(signature.signature),
             "k": 1,
             "num_candidates": 100,
         }

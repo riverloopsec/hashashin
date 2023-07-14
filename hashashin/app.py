@@ -10,6 +10,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Union
 from collections import Counter
+import os
+from typing import Iterable
+from multiprocessing import Pool
 
 import logging
 
@@ -38,24 +41,33 @@ class HashApp:
         repository: AbstractHashRepository = SQLAlchemyHashRepository(),
         extractor: str = "binja",
         loglevel: int = logging.DEBUG,
+        multiprocessing: int = 0,  # os.cpu_count() // 2 + 1,
     ):
         self._initialize_logger(loglevel)
         logger.debug("Making HashApp")
         self.repo: AbstractHashRepository = repository
         self.extractor: FeatureExtractor = FeatureExtractor.from_name(extractor)
+        self._pool = Pool(processes=multiprocessing) if multiprocessing else False
 
     @classmethod
     def from_type(cls, repo_type: RepositoryType, extractor: str = "binja"):
         return cls(repository=cls._repo_from_type(repo_type), extractor=extractor)
 
     def hash_file(self, binary_path: Union[Path, str]) -> BinarySignature:
+        print(binary_path)
         binary_path = str2path(binary_path)
         bs: BinarySignature = self.extractor.extract_from_file(binary_path)
         return bs
 
     def hash_dir(self, binary_path: Union[Path, str]) -> list[BinarySignature]:
         binary_path = str2path(binary_path)
-        return [self.hash_file(p) for p in get_binaries(binary_path)]
+        targets = get_binaries(binary_path)
+        if self._pool:
+            # TODO: fix pickling error
+            raise NotImplementedError
+            # submissions = [self._executor.submit(self.hash_file, p) for p in targets]
+            # return [s.result() for s in futures.as_completed(submissions)]
+        return [self.hash_file(p) for p in targets]
 
     def hash_path(self, binary_path: Union[Path, str]) -> list[BinarySignature]:
         binary_path = str2path(binary_path)
@@ -64,6 +76,24 @@ class HashApp:
         if binary_path.is_file():
             return [self.hash_file(binary_path)]
         raise ValueError(f"Invalid path: {binary_path}")
+
+    def hash_list(self, bins: Iterable[Path]) -> list[BinarySignature]:
+        out = list()
+        if self._pool is not None:
+            raise NotImplementedError
+            # pooled_ret = self._pool.map(self.hash_path, bins)
+            # for ret in pooled_ret:
+            #     out.extend(ret)
+            # return out
+        for target in map(Path, bins):
+            if not target.is_file() and \
+                    not (target.is_dir() and
+                         len(get_binaries(target, progress=True)) > 0):
+                logger.debug(f"Skipping {target} as it is not a binary")
+                continue
+            logger.info(f"Hashing {target}")
+            out.extend(self.hash_path(target))
+        return out
 
     def save(self, binaries: Union[list[BinarySignature], BinarySignature]):
         if isinstance(binaries, BinarySignature):
@@ -78,7 +108,7 @@ class HashApp:
         self.save(sigs := self.hash_dir(binary_path))
         return sigs
 
-    def match(self, sig: BinarySignature, n: int = 10):
+    def match(self, sig: BinarySignature, n: int = 10) -> "QueryResult":
         return self.repo.match(sig, n)
         # for bs in binaries:
         #     for fn in bs.functionFeatureList:

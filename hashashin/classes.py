@@ -341,7 +341,7 @@ class BinjaFeatureExtractor(FeatureExtractor):
                 print()
             if bv.analysis_progress.state != enums.AnalysisState.IdleState:
                 raise TimeoutError(f"Analysis timed out after {timeout}s")
-            if time.time() - start > 30:
+            if time.time() - start > 10:
                 logger.debug(f"Analysis took {time.time() - start:.1f}s, caching bndb")
                 bv.create_database(f"{bv.file.filename}.bndb")
         return bv
@@ -476,9 +476,20 @@ class FunctionFeatures:
 
         @staticmethod
         def deserialize(s):
+            if len(s) == 0:
+                return set()
             return set(int(_) for _ in s.split(","))
 
-    class Strings(Feature, list):
+        @classmethod
+        def fromSerialized(cls, s):
+            return cls(cls.deserialize(s))
+
+        def __xor__(self, other):
+            if len(self | other) == 0:
+                return 1  # avoid division by zero
+            return len(self & other) / len(self | other)
+
+    class Strings(Feature, set):
         length = 512
 
         def __init__(self, strings):
@@ -508,7 +519,8 @@ class FunctionFeatures:
                     "Wasting space here, can shorten array by 256 bytes by using uint32"
                 )
                 logger.warned = True  # type: ignore
-            strings = "\0".join(sorted(self[: len(self)])).encode("utf-8")
+            sl = list(self)
+            strings = "\0".join(sorted(sl[: len(sl)])).encode("utf-8")
             strings = strings[: min(len(strings), self.length)]
             return np.pad(
                 np.frombuffer(strings, dtype=np.byte),
@@ -522,6 +534,13 @@ class FunctionFeatures:
         @staticmethod
         def deserialize(string):
             return string.split(",")
+
+        @classmethod
+        def fromSerialized(cls, string):
+            return cls(cls.deserialize(string))
+
+        def __xor__(self, other):
+            return len(self & other) / len(self | other)
 
     extraction_engine: FeatureExtractor
     function: AbstractFunction
@@ -548,6 +567,7 @@ class FunctionFeatures:
             ]
         ]
     )
+    static_length = length - Constants.length - Strings.length
     # Reference used to set the foreign key in the database
     binary_id: Optional[int] = None
     FEATURE_ORDERING = [
@@ -583,19 +603,28 @@ class FunctionFeatures:
         if not isinstance(self.strings, self.Strings):
             self.strings = self.Strings(self.strings)
 
+    @property
+    def static_properties(self) -> npt.NDArray[np.uint32]:
+        return np.array(
+            [
+                self.cyclomatic_complexity,
+                self.num_instructions,
+                self.num_strings,
+                self.max_string_length,
+                *self.vertex_histogram,
+                *self.edge_histogram,
+                *self.instruction_histogram,
+                *self.dominator_signature.asArray(),
+            ],
+            dtype=np.uint32,
+        )
+
     def asArray(self) -> npt.NDArray[np.uint32]:
         try:
             logger.dominator_warning = False
             array = np.array(
                 [
-                    self.cyclomatic_complexity,
-                    self.num_instructions,
-                    self.num_strings,
-                    self.max_string_length,
-                    *self.vertex_histogram,
-                    *self.edge_histogram,
-                    *self.instruction_histogram,
-                    *self.dominator_signature.asArray(),
+                    *self.static_properties,
                     *self.constants.asArray(),
                     *self.strings.asArray(),
                 ],
@@ -632,7 +661,8 @@ class FunctionFeatures:
         cls,
         array: npt.NDArray[np.uint32],
         name: str,
-        path: Path,
+        # path: Path,
+        function: AbstractFunction,
         extraction_engine: FeatureExtractor,
     ) -> "FunctionFeatures":
         if not len(array) == cls.length:
@@ -641,7 +671,7 @@ class FunctionFeatures:
             )
         return cls(
             extraction_engine=extraction_engine,
-            function=extraction_engine.get_abstract_function(path, name),
+            function=function,
             cyclomatic_complexity=array[0],
             num_instructions=array[1],
             num_strings=array[2],
@@ -718,6 +748,32 @@ class FunctionFeatures:
             model.name,
             model.binary.path,
             extractor_from_name(model.extraction_engine),
+        )
+
+    @classmethod
+    def fromSerializedDict(cls, d: Dict[str, Any], engine: Optional[str]):
+        if "static_properties" not in d:
+            raise ValueError(f"Missing static properties in {d}")
+        if max(d["static_properties"]) >= 2 ** 32:
+            raise ValueError(f"Static properties must fit in uint32, got {d['static_properties']}")
+        if min(d["static_properties"]) < 0:
+            raise ValueError(f"Static properties must be positive, got {d['static_properties']}")
+        try:
+            array = np.concatenate([
+                    d["static_properties"],
+                    cls.Constants.fromSerialized(d["constants"]).asArray(),
+                    cls.Strings.fromSerialized(d["strings"]).asArray()
+                ], casting="unsafe", dtype=np.uint32)
+        except Exception as e:
+            breakpoint()
+            logger.error(f"Error while creating array for {d['name']}")
+            raise e
+
+        return cls.fromArray(
+            array=array,
+            name=d["name"],
+            function=AbstractFunction(name=d["name"], _function=None),
+            extraction_engine=extractor_from_name(engine) if engine else BinjaFeatureExtractor(),
         )
 
     def asBytes(self) -> bytes:

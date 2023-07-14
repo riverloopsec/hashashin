@@ -2,8 +2,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
-from typing import Union, Iterable, Optional
+from typing import Union, Iterable, Optional, Callable
+import random
 import subprocess
 import git
 
@@ -13,6 +15,8 @@ import numpy.typing as npt
 from tqdm import tqdm  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+IDX_EXPIRY = 60 * 60 * 24  # 1 day
 
 
 def get_binaries(
@@ -35,7 +39,9 @@ def get_binaries(
         files = list(path.glob(globber + "/*"))
     else:
         files = list(path.glob(globber + f"/{bin_name}"))
-    if (Path(path) / ".bin.idx").is_file():
+    if (Path(path) / ".bin.idx").is_file() and (
+        os.path.getmtime(Path(path) / ".bin.idx") + IDX_EXPIRY > time.time()
+    ):
         logger.debug(f"Loading cached binary paths from {Path(path) / '.bin.idx'}")
         with open(Path(path) / ".bin.idx", "r") as f:
             binaries = [Path(b) for b in json.load(f)]
@@ -169,3 +175,14 @@ def str2path(str_or_path: Union[str, Path]) -> Path:
     elif isinstance(str_or_path, Path):
         return str_or_path
     raise TypeError(f"Expected str or Path, got {type(str_or_path)}")
+
+
+def normalize(vec: np.ndarray) -> np.ndarray:
+    return vec / np.linalg.norm(vec)
+
+
+def random_max(li: list, key: Callable):
+    # we want random tiebreakers to bring expected value closer to true positive
+    max_val = max(li, key=key)
+    max_vals = [x for x in li if key(x) == key(max_val)]
+    return random.choice(max_vals)

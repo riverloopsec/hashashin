@@ -204,15 +204,10 @@ def _demo_handler(args: argparse.Namespace, app: HashApp) -> bool:
 
 
 def hash_binaries(binaries: list[str], app: HashApp) -> list[BinarySignature]:
+    # TODO: multi-threading
     logger.debug("Hashing binaries")
-    bins = list()
-    for target in map(Path, binaries):
-        if not target.is_file() or len(get_binaries(target, silent=True)) == 0:
-            logger.debug(f"Skipping {target} as it is not a binary")
-            continue
-        logger.info(f"Hashing {target}")
-        bins.extend(app.hash_path(target))
-    return bins
+    logger.warning("This function uses lots of memory.")
+    return app.hash_list(map(Path, binaries))
 
 
 def _app_handler(args: argparse.Namespace, app: HashApp) -> bool:
@@ -233,17 +228,16 @@ def _app_handler(args: argparse.Namespace, app: HashApp) -> bool:
         app.save(hash_bins)
 
     if getattr(args, "match", None) is not None:
-        logger.debug("Matching binaries")
+        logger.info("Matching binaries")
         match_bins = list()
         for target in map(Path, args.match):
             match_bins.extend(app.hash_path(target))
-        matches = list()
         for target in hash_bins + match_bins:
-            matches.append(app.match(target))
+            matches = app.match(target)
             logger.info(
                 f"Matched {target.path}:\n"
                 + "\n".join(
-                    [f"\t{match.path}: {target ^ match.sig}" for match in matches]
+                    [f"\t{match.signature.path}: {match.score}" for match in matches]
                 )
                 + "\n"
             )
