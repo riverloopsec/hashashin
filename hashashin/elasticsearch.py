@@ -1,23 +1,25 @@
-from hashashin.db import AbstractHashRepository
-from dataclasses import dataclass
-from elasticsearch import Elasticsearch
-from elasticsearch import helpers
-from hashashin.classes import BinarySignature
-from hashashin.classes import BinarySigModel
-from hashashin.classes import FunctionFeatModel
-from hashashin.classes import extractor_from_name
-from hashashin.classes import BinjaFeatureExtractor
-from pathlib import Path
-from typing import List, Optional, Union
-from hashashin.classes import FunctionFeatures
-from hashashin.classes import AbstractFunction
-from hashashin.classes import merge_uint32_to_int
-from hashashin.utils import normalize, random_max
-from typing import Tuple
 import base64
 import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import List
+from typing import Optional
+from typing import Tuple
+from typing import Union
+
 import numpy as np
-import pprint
+from elasticsearch import Elasticsearch
+from elasticsearch import helpers
+
+from hashashin.classes import BinarySigModel
+from hashashin.classes import BinarySignature
+from hashashin.classes import BinjaFeatureExtractor
+from hashashin.classes import FunctionFeatModel
+from hashashin.classes import FunctionFeatures
+from hashashin.classes import extractor_from_name
+from hashashin.db import AbstractHashRepository
+from hashashin.utils import normalize
+from hashashin.utils import random_max
 
 logger = logging.getLogger(__name__)
 
@@ -322,32 +324,24 @@ class ElasticSearchHashRepository(AbstractHashRepository):
             )["hits"]["hits"]
         ]
 
-    @staticmethod
-    def cosine_similarity(v1: list, v2: list):
-        if len(v1) != len(v2):
-            raise ValueError("Vectors must be same length")
-        return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
-
-    @staticmethod
-    def hamming_distance(v1: list, v2: list):
-        if len(v1) != len(v2):
-            raise ValueError("Vectors must be same length")
-        return sum([1 if v1[i] != v2[i] else 0 for i in range(len(v1))])
-
     def match(
         self, signature: BinarySignature, num_matches: int = 5
     ) -> List[QueryResult]:
         searches = list()
-        for func in filter(lambda f: f.cyclomatic_complexity > 1, signature.functionFeatureList):
+        for func in filter(
+            lambda f: f.cyclomatic_complexity > 1, signature.functionFeatureList
+        ):
             searches.append({"index": self.config.index})
-            searches.append({
+            searches.append(
+                {
                     "knn": {
                         "field": "static_properties",
                         "query_vector": func.static_properties,
                         "k": 5,
                         "num_candidates": 1000,
                     }
-                })
+                }
+            )
         response = self.client.msearch(searches=searches)
 
         match_counts = dict()
@@ -373,8 +367,12 @@ class ElasticSearchHashRepository(AbstractHashRepository):
                     ^ func.strings
                 ),
             )
-            match_counts[closest_hit["_routing"]] = match_counts.get(closest_hit["_routing"], 0) + 1
-            scores[closest_hit["_routing"]] = scores.get(closest_hit["_routing"], 0) + closest_hit["_score"]
+            match_counts[closest_hit["_routing"]] = (
+                match_counts.get(closest_hit["_routing"], 0) + 1
+            )
+            scores[closest_hit["_routing"]] = (
+                scores.get(closest_hit["_routing"], 0) + closest_hit["_score"]
+            )
             logger.debug(match_counts)
             logger.debug(scores)
 

@@ -206,7 +206,6 @@ def _demo_handler(args: argparse.Namespace, app: HashApp) -> bool:
 def hash_binaries(binaries: list[str], app: HashApp) -> list[BinarySignature]:
     # TODO: multi-threading
     logger.debug("Hashing binaries")
-    logger.warning("This function uses lots of memory.")
     return app.hash_list(map(Path, binaries))
 
 

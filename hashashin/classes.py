@@ -341,9 +341,9 @@ class BinjaFeatureExtractor(FeatureExtractor):
                 print()
             if bv.analysis_progress.state != enums.AnalysisState.IdleState:
                 raise TimeoutError(f"Analysis timed out after {timeout}s")
-            if time.time() - start > 10:
-                logger.debug(f"Analysis took {time.time() - start:.1f}s, caching bndb")
-                bv.create_database(f"{bv.file.filename}.bndb")
+            # if time.time() - start > 10:
+            #     logger.debug(f"Analysis took {time.time() - start:.1f}s, caching bndb")
+            #     bv.create_database(f"{bv.file.filename}.bndb")
         return bv
 
     def extract_from_file(self, path: Path, progress_kwargs=None) -> "BinarySignature":

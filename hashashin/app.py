@@ -67,7 +67,14 @@ class HashApp:
             raise NotImplementedError
             # submissions = [self._executor.submit(self.hash_file, p) for p in targets]
             # return [s.result() for s in futures.as_completed(submissions)]
-        return [self.hash_file(p) for p in targets]
+        out = list()
+        for p in targets:
+            try:
+                out.append(self.hash_file(p))
+            except FeatureExtractor.NotABinaryError:
+                logger.warning(f"Skipping non-binary file: {p}")
+                continue
+        return out
 
     def hash_path(self, binary_path: Union[Path, str]) -> list[BinarySignature]:
         binary_path = str2path(binary_path)

@@ -186,3 +186,15 @@ def random_max(li: list, key: Callable):
     max_val = max(li, key=key)
     max_vals = [x for x in li if key(x) == key(max_val)]
     return random.choice(max_vals)
+
+
+def cosine_similarity(v1: list, v2: list):
+    if len(v1) != len(v2):
+        raise ValueError("Vectors must be same length")
+    return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+
+
+def hamming_distance(v1: list, v2: list):
+    if len(v1) != len(v2):
+        raise ValueError("Vectors must be same length")
+    return sum([1 if v1[i] != v2[i] else 0 for i in range(len(v1))])
