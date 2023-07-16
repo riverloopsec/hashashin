@@ -126,4 +126,3 @@ tests/
 __pycache__/
 build/
 *.db
-.DS_Store
