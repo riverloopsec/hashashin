@@ -241,7 +241,7 @@ def _app_handler(args: argparse.Namespace, app: HashApp) -> bool:
                 + "\n"
             )
 
-    return bool(args.match or args.hash)
+    return bool(getattr(args, "match", False) or getattr(args, "hash", False))
 
 
 def cli_handler(
