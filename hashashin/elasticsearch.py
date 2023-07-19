@@ -244,7 +244,9 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         functions = body.pop("functions")
         # insert binary
         resp = self.client.index(
-            index=self.config.index, body=body | {"bin_fn_relation": {"name": "binary"}}
+            index=self.config.index,
+            # body=body | {"bin_fn_relation": {"name": "binary"}}  # >py3.9
+            body={**body, "bin_fn_relation": {"name": "binary"}}
         )
         bin_id = resp["_id"]
 
