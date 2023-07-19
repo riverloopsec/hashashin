@@ -47,15 +47,8 @@ setuptools.setup(
         "python-magic",
         "scikit-learn",
         "GitPython",
-	"elasticsearch",
-        # "matplotlib",
-        # "pandas",
-        # "seaborn",
+        "elasticsearch",
     ],
-    # extras_require={
-    #     "dev": [
-    #     ],
-    # },
     python_requires=">=3.8",
     entry_points={
         "console_scripts": [

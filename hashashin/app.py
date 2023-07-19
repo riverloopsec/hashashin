@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Union
 from collections import Counter
 import os
-from typing import Iterable
+from typing import Iterable, List
 from multiprocessing import Pool
 
 import logging
@@ -59,7 +59,7 @@ class HashApp:
         bs: BinarySignature = self.extractor.extract_from_file(binary_path)
         return bs
 
-    def hash_dir(self, binary_path: Union[Path, str]) -> list[BinarySignature]:
+    def hash_dir(self, binary_path: Union[Path, str]) -> List[BinarySignature]:
         binary_path = str2path(binary_path)
         targets = get_binaries(binary_path)
         if self._pool:
@@ -76,7 +76,7 @@ class HashApp:
                 continue
         return out
 
-    def hash_path(self, binary_path: Union[Path, str]) -> list[BinarySignature]:
+    def hash_path(self, binary_path: Union[Path, str]) -> List[BinarySignature]:
         binary_path = str2path(binary_path)
         if binary_path.is_dir():
             return self.hash_dir(binary_path)
@@ -84,7 +84,7 @@ class HashApp:
             return [self.hash_file(binary_path)]
         raise ValueError(f"Invalid path: {binary_path}")
 
-    def hash_list(self, bins: Iterable[Path]) -> list[BinarySignature]:
+    def hash_list(self, bins: Iterable[Path]) -> List[BinarySignature]:
         out = list()
         if self._pool is not None:
             raise NotImplementedError
@@ -102,7 +102,7 @@ class HashApp:
             out.extend(self.hash_path(target))
         return out
 
-    def save(self, binaries: Union[list[BinarySignature], BinarySignature]):
+    def save(self, binaries: Union[List[BinarySignature], BinarySignature]):
         if isinstance(binaries, BinarySignature):
             binaries = [binaries]
         self.repo.saveAll(binaries)
@@ -111,7 +111,7 @@ class HashApp:
         self.save(bs := self.hash_file(binary_path))
         return bs
 
-    def save_dir(self, binary_path: Union[Path, str]) -> list[BinarySignature]:
+    def save_dir(self, binary_path: Union[Path, str]) -> List[BinarySignature]:
         self.save(sigs := self.hash_dir(binary_path))
         return sigs
 

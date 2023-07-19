@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 import argparse
 from hashashin.db import AbstractHashRepository
 from hashashin.app import HashApp
@@ -203,7 +203,7 @@ def _demo_handler(args: argparse.Namespace, app: HashApp) -> bool:
     return False
 
 
-def hash_binaries(binaries: list[str], app: HashApp) -> list[BinarySignature]:
+def hash_binaries(binaries: List[str], app: HashApp) -> List[BinarySignature]:
     # TODO: multi-threading
     logger.debug("Hashing binaries")
     return app.hash_list(map(Path, binaries))
