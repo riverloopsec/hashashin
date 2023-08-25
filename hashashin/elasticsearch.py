@@ -244,9 +244,7 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         functions = body.pop("functions")
         # insert binary
         resp = self.client.index(
-            index=self.config.index,
-            # body=body | {"bin_fn_relation": {"name": "binary"}}  # >py3.9
-            body={**body, "bin_fn_relation": {"name": "binary"}}
+            index=self.config.index, body=body | {"bin_fn_relation": {"name": "binary"}}
         )
         bin_id = resp["_id"]
 
@@ -387,7 +385,7 @@ class ElasticSearchHashRepository(AbstractHashRepository):
         logger.debug(f"Scores: {scores}")
         return [
             self.QueryResult(score=s, signature=self.get(b))
-            for b, s in sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            for b, s in scores.items()
             if b in binaries
         ]
 

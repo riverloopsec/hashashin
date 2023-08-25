@@ -31,7 +31,7 @@ print(f"Binary Ninja API {'' if installed_api else 'already '}installed.")
 
 setuptools.setup(
     name="hashashin",
-    version="0.1.1",
+    version="0.1.0",
     license="MIT",
     author="Jonathan Prokos",
     author_email="jonathan.prokos@twosixtech.com",
@@ -47,8 +47,14 @@ setuptools.setup(
         "python-magic",
         "scikit-learn",
         "GitPython",
-        "elasticsearch",
+        # "matplotlib",
+        # "pandas",
+        # "seaborn",
     ],
+    # extras_require={
+    #     "dev": [
+    #     ],
+    # },
     python_requires=">=3.8",
     entry_points={
         "console_scripts": [
