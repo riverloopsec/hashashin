@@ -1,0 +1,356 @@
+<h1 id="hashashin-update">Hashashin Update</h1>
+<h4 id="by-jonathan-prokos-august-2023">By Jonathan Prokos | August
+2023</h4>
+<p>Our last blog post on Hashashin was almost four years ago<a
+href="#fn1" class="footnote-ref" id="fnref1"
+role="doc-noteref"><sup>1</sup></a>; since then the entire tool has been
+redesigned. As Hashashin is being transitioned into other work, it is
+time we provide an updated blog post outlining the approaches we tried
+and lessons learned through the process of developing this tool.</p>
+<h2 id="tldr-what-is-hashashin">tldr; What is Hashashin?</h2>
+<p>Hashashin utilizes statistical methods to compare functions within a
+binary. This allows us to identify similar functions across binaries.
+This is useful for identifying code reuse, malware, and other
+interesting properties of binaries.</p>
+<p>You may find this tool useful if you are interested in: - Identifying
+the libraries used within a binary + their versions - Identifying code
+reuse across binaries - Matching unknown binaries to known binaries -
+Quickly identifying differences between patched binaries - Performing
+any of these tasks at scale</p>
+<h2 id="previous-approach">Previous Approach</h2>
+<p>Our previous approach utilized Locality Sensitive Hashing (LSH)<a
+href="#fn2" class="footnote-ref" id="fnref2"
+role="doc-noteref"><sup>2</sup></a> along with the Weisfeiler Lehman
+Isomorphism Test (WLI)<a href="#fn3" class="footnote-ref" id="fnref3"
+role="doc-noteref"><sup>3</sup></a> to produce a graph representation of
+the basic blocks within a function which was used to compute similarity.
+While this approach works in theory, in practice this does not scale
+well.</p>
+<p>Throughout the rest of this blog post I will go over my thought
+process and decisions made while redesigning Hashashin.</p>
+<h2 id="background-motivation">Background / Motivation</h2>
+<p>The primary focus when redesigning Hashashin was performance. While
+WLI provides an accurate estimate of graph similarity, it is far too
+slow for our application - scaling exponentially with the number of
+functions stored in the database.</p>
+<p>While graph isomorphism is not able to handle these problems at
+scale, the idea of using LSH - also referred to as “fuzzy hashing” -
+remains at the core how Hashashin operates. The first step to
+redesigning this software was to perform a literature review of the
+current SoA in fuzzy hashing.</p>
+<h3 id="literature-review">Literature Review</h3>
+<p>The most common use case of similar tools is in detecting malware and
+plagarism detection. Some of the papers I reviewed - in no particular
+order - during this process are listed below. Note many of the links
+have deprecated in the 8 months since access and most papers have minor
+differences between the published version and the version I read.</p>
+<ol type="1">
+<li><a
+href="https://keenlab.tencent.com/en/whitepapers/Ordermatters.pdf">Order
+Matters: Semantic-Aware Neural Networks for Binary Code Similarity
+Detection</a></li>
+<li><a
+href="https://link.springer.com/chapter/10.1007/978-3-030-37228-6_14">Topology-Aware
+Hashing for Effective Control Flow Graph Similarity Analysis</a></li>
+<li><a href="https://inria.hal.science/hal-01648996/document">BinSign: A
+Signature-Based Approach for Binary Code Similarity Detection</a></li>
+<li><a href="https://lannan.github.io/papers/cop-fse2014.pdf">Software
+Plagiarism Detection</a></li>
+<li><a
+href="https://www.sciencedirect.com/science/article/abs/pii/S0957417421016754">A
+stratified approach to function fingerprinting in program binaries using
+diverse features</a></li>
+<li><a href="https://arxiv.org/abs/1708.06525">Neural Network-based
+Graph Embedding for Cross-Platform Binary Code Similarity
+Detection</a></li>
+<li><a href="https://dl.acm.org/doi/10.1145/3238147.3238199">αDiff-
+Cross-Version Binary Code Similarity Detection with DNN</a></li>
+<li><a
+href="https://www.ndss-symposium.org/ndss-paper/neural-machine-translation-inspired-binary-code-similarity-comparison-beyond-function-pairs/">Neural
+Machine Translation Inspired Binary Code Similarity Comparison beyond
+Function Pairs</a></li>
+<li><a
+href="https://papers.nips.cc/paper_files/paper/2012/hash/072b030ba126b2f4b2374f342be9ed44-Abstract.html">NIPS-2012-super-bit-locality-sensitive-hashing-Paper</a></li>
+<li><a href="https://arxiv.org/abs/2102.08942">A Survey on Locality
+Sensitive Hashing Algorithms and their Applications</a></li>
+<li><a href="https://arxiv.org/abs/1909.11424">A Survey of Binary Code
+Similarity</a></li>
+<li><a
+href="https://www.usenix.org/conference/usenixsecurity22/presentation/marcelli">How
+Machine Learning Is Solving the Binary Function Similarity
+Problem</a></li>
+<li><a
+href="https://proceedings.neurips.cc/paper/2009/hash/a5e00132373a7031000fd987a3c9f87b-Abstract.html">NIPS-2009-locality-sensitive-binary-codes-from-shift-invariant-kernels-Paper</a></li>
+<li><a href="https://ieeexplore.ieee.org/document/8330221">Efficient
+features for function matching between binary executables</a></li>
+</ol>
+<p>Of these papers, BinSign<a href="#fn4" class="footnote-ref"
+id="fnref4" role="doc-noteref"><sup>4</sup></a> best encapsulated the
+design goals of this Hashashin refactor. In particular, we move away
+from a test of graph similarity to a comparison of extracted features.
+Additionally, the paper describes a methodology for generating a
+candidate set of similar functions which can be generated using a more
+efficient algorithm for which a deeper comparison can be utilized in a
+second step.</p>
+<p>These ideas gave rise to the notion of a tiered hashing system in
+which a BinarySignature - consisting of many FunctionFeatures - can be
+compared against a database of other signatures efficiently using the
+minhash algorithm<a href="#fn5" class="footnote-ref" id="fnref5"
+role="doc-noteref"><sup>5</sup></a>. Many ideas for which features to
+use come from <em>Efficient features for function matching between
+binary executables by Karamitas &amp; Kehagias</em><a href="#fn6"
+class="footnote-ref" id="fnref6"
+role="doc-noteref"><sup>6</sup></a>.</p>
+<h2 id="initial-design">Initial Design</h2>
+<p>The first step to implementing this redesign is to develop a set of
+features which can be extracted from a function. While this list is
+configurable to the use case, by default<a href="#fn7"
+class="footnote-ref" id="fnref7" role="doc-noteref"><sup>7</sup></a>
+Hashashin extracts the following features using the BinaryNinja API<a
+href="#fn8" class="footnote-ref" id="fnref8"
+role="doc-noteref"><sup>8</sup></a>: - Cyclomatic Complexity<a
+href="#fn9" class="footnote-ref" id="fnref9"
+role="doc-noteref"><sup>9</sup></a> - Number of Instructions - Number of
+Strings - Maximum String Length - Vertex Histogram - Edge Histogram -
+Instruction Histogram - Dominator Signature - Extracted Constants -
+Extracted Strings</p>
+<p>The extracted vertex and edge histograms are modifications of the
+solution posed in §IV.A of Karamitas<a href="#fn10" class="footnote-ref"
+id="fnref10" role="doc-noteref"><sup>10</sup></a>. The dominator
+signature is an exact implementation of what Karamitas calls <em>digraph
+signatures</em> from §IV.B. The instruction histogram relies on
+BinaryNinja’s MLIL.</p>
+<p>Note the last two features - constants and strings - are just the
+first 64 and 512 bytes of a sorted list of the extracted feature
+respectively. This is done to create a staticly sized feature vector to
+compute matrix norms.</p>
+<p>Once all function features have been computed, we use the minhash
+algorithm<a href="#fn11" class="footnote-ref" id="fnref11"
+role="doc-noteref"><sup>11</sup></a> to generate a BinarySignature which
+can be used to efficiently estimate jaccard similarity between other
+BinarySignatures.</p>
+<h3 id="comparison">Comparison</h3>
+<p>Under this tiered system we now have two ways to compare binaries:
+<code>--fast-match</code> and <code>--robust-match</code>. These options
+utilize both the minhash similarity estimate and true jaccard similarity
+respectively<a href="#fn12" class="footnote-ref" id="fnref12"
+role="doc-noteref"><sup>12</sup></a>. The former relies on the minhash
+generated BinarySignature. For the latter comparison, we compute
+similarity using matrix norms<a href="#fn13" class="footnote-ref"
+id="fnref13" role="doc-noteref"><sup>13</sup></a>. This returns a score
+between 0 and 2 for a collection of functions against another collection
+of functions. For estimating version, we compute this similarity between
+the candidate binary and the dataset of binaries each with their
+respective collection of functions.</p>
+<h3 id="does-it-work">Does it work?</h3>
+<p>Yup, look at that graph! Our initial target for what this tool can be
+utilized for is identifying the unknown version of a known binary. To
+test this, we collect a dataset of adjacent binaries - including
+<code>net-snmp</code>, <code>libcurl</code>, and
+<code>openssl</code>.</p>
+<p>Under <code>net-snmp</code>, we find that the
+<code>--fast-match</code> option works surprisingly well at determining
+not only the adjacent version for an unknown binary, but also its name
+under <code>net-snmp</code> (i.e. <code>agentxtrap</code>). However when
+introducing <code>libcurl</code> and <code>openssl</code> into the mix
+we find significant mismatching. We hypothesize this is due to
+<code>net-snmp</code> being a much smaller binary and therefore has far
+fewer “empty” functions. This is a problem which is addressed during our
+Elasticsearch upgrade which I will speak of later. A demo of these
+issues is shown in the <a
+href="https://github.com/riverloopsec/hashashin/blob/develop/README.md#demo-usage">Hashashin
+readme</a> along with additional figures.</p>
+<p>Despite the troubles with <code>--fast-match</code> false positives,
+the <code>--robust-match</code> comparison works very well. The
+following graphic shows the similarity between pairwise comparisons of
+60 <code>libcurl</code> binaries (gathered from v7.8 through v7.84.0):
+<img
+src="https://raw.githubusercontent.com/riverloopsec/hashashin/develop/libcurl_similarity_matrix.png"
+alt="libcurl_similarity_matrix" /></p>
+<p>Ignoring the outliers - likely due to version string ordering &amp;
+major version differences - we see a very strong correlation between
+adjacent versions of <code>libcurl</code>. This shows that given an
+unknown version of <code>libcurl</code> we can match it to a known
+version with a high degree of confidence. This is a very promising
+result for Hashashin’s future.</p>
+<h4 id="transition">Transition</h4>
+<p>Given the results shown above, we begin looking to transition the
+Hashashin tool into other platforms at this point. Our first target for
+this transition is to utilize Hashashin within a platform called Pilot<a
+href="#fn14" class="footnote-ref" id="fnref14"
+role="doc-noteref"><sup>14</sup></a>. This is a COTS platform aimed to
+help developers and device vendors detect and remediate vulnerabilities
+in their firmware. The goal of this transition is to utilize Hashashin
+to pin potential <code>net-snmp</code> binaries to a known version with
+the intention of cross-referencing those versions against a database of
+known vulnerabilities.</p>
+<p>While this work transitioned successfully, it highlighted a few
+issues with Hashashin moving forwards.</p>
+<h3 id="growing-pains">Growing Pains</h3>
+<p>At this point in Hashashin’s development, we rely on a SQLAlchemy
+database. This is great because we can use ORMs to quickly swap out our
+backend, but SQL has quickly become a major hindrance to Hashashin’s
+effectiveness. The largest issue with this current design - as shown in
+our Pilot transition - is the database recovery time before we even
+begin to perform comparisons. As a hotfix for the Pilot use-case, we
+instead store the <code>net-snmp</code> database as their respective
+numpy arrays to-be-compared in a pickle file. This is a major
+improvement in comparison time, but it is not a long-term solution.</p>
+<p>Before we transition the Hashashin tool into other platforms we look
+into a full database redesign. Namely, we look to perform the bulk of
+similarity comparisons at the database level rather than the application
+level. This is where we begin to look into Elasticsearch<a href="#fn15"
+class="footnote-ref" id="fnref15"
+role="doc-noteref"><sup>15</sup></a>.</p>
+<h2 id="current-design">Current Design</h2>
+<p>In addition to transitioning Hashashin into Pilot, we look to
+integrate the tool into an A.I.-assisted reverse engineering platform to
+perform Binary Similarity Analysis. As the platform already utilizes
+Elasticsearch for much of its other processes, it is a natural fit to
+integrate into Hashashin.</p>
+<h3 id="elasticsearch">Elasticsearch</h3>
+<p>At a high level, Elasticsearch is able to perform similarity
+comparisons between documents using a vector space model. While this
+provides some speedup to the <code>--fast-match</code> process, it
+provides very significant speedups to <code>--robust-match</code> which
+performs comparisons at the function level. When using Elasticsearch, we
+completely remove the <code>--fast-match</code> option and implement a
+generic <code>match</code><a href="#fn16" class="footnote-ref"
+id="fnref16" role="doc-noteref"><sup>16</sup></a> function.</p>
+<h4 id="elasticsearch-mapping">Elasticsearch Mapping</h4>
+<p>In order to utilize Elasticsearch for our comparisons, we must first
+define a mapping for our documents. Elasticsearch utilizes a flat
+document structure for lookups meaning we need to create a parent-child
+relationship between Binaries and their respective FunctionFeatures.
+Additionally, we decide to create <code>static_properties</code> as a
+feature vector which does not include the extracted strings or constants
+such that we can compare those features after the initial knn return.
+Our mapping can be found in <a
+href="https://github.com/riverloopsec/hashashin/blob/e5da28fc85d4643ede1e46df3b6ec9e76106e402/hashashin/elasticsearch.py#L110-L169">ElasticSearchHashRepository.create</a>;
+note all properties to be searched over must be stored at the top level
+of the mapping for knn-search. This means the notion of Binaries and
+Functions are both stored in the ES database as a single document type
+and <code>bin_fn_relation</code> notates which of the two the document
+is.</p>
+<h4 id="the-match-query">The Match Query</h4>
+<p>Now that we have a mapping, we can search over the database using
+knn-search. Below is pseudocode of our match query (full code here<a
+href="#fn17" class="footnote-ref" id="fnref17"
+role="doc-noteref"><sup>17</sup></a>):</p>
+<pre class="text"><code>Given a BinarySignature which contains a functionFeatureList
+search_list = functions in functionFeatureList with cyclomatic complexity &gt; 1
+bulk_search = []
+for each func in search_list:
+    header = {&quot;index&quot;: self.config.index}
+    body = dict knn -&gt; field = static_properties
+    add header and body to bulk_search
+call msearch to search all queries
+match_counts = dict()
+for each response:
+    get closest hits by score
+    factor in constants and strings to update scores
+    if there is a tie for closest hit, randomly choose one
+    add the closest hit to match_counts and record its score
+Update scores to be a percentage of total score
+Return the top 5 matches sorting by the updated scores</code></pre>
+<p>As you can see, we first query the <code>static_properties</code> to
+return the top 5 closest hits for each function in the candidate binary
+then filter that down to get a closest match using the strings and
+constants. We then use those results to determine the likelihood the
+candidate binary belongs to a pre-computed binary already in the
+database based on how many of its functions match to the one stored in
+the db.</p>
+<h2 id="future-work">Future Work</h2>
+<p>In addition to general development fixes, there are a few key
+directions future Hashashin work can involve.</p>
+<h4 id="performance-analysis">Performance Analysis</h4>
+<p>Hashashin has not been largely tested at scale as the REPO
+integration is ongoing. A major area of investigation to address is to
+determine which features are the most strongly correlated with
+true-positive matches. This will naturally facilitate additional feature
+extraction and more fine-tuned comparisons.</p>
+<h4 id="feature-extraction">Feature Extraction</h4>
+<p>Hashashin currently relies on BinaryNinja to perform its extraction
+of functions and their respective features. A major hurdle for
+integrating this tool into other tools comes from the BinaryNinja
+licensing issues. Future work to implement a Ghidra extraction engine
+will alleviate this issue and allow Hashashin to be transitioned into
+more products at scale.</p>
+<h4 id="plugin-development">Plugin Development</h4>
+<p>Hashashin currently has a really terrible BinaryNinja plugin, it
+would be really nice to introduce this tool into the workflow of a
+reverse engineer.</p>
+<h4 id="library-detection">Library Detection</h4>
+<p>We implement a <code>net-snmp</code> detector using Hashashin for our
+integration into Pilot, however there has not been much work into
+generalizing this process. A critical area of future work is to develop
+a system for generating a database of libraries to be used for this
+similarity analysis.</p>
+<h2 id="conclusion-how-can-you-use-this">Conclusion / How Can You Use
+This?</h2>
+<p>If you are ingesting an unknown binary and would like to perform
+similarity analysis to recover its closest version, determine which
+libraries may be contained in the binary, or which parts of the binary
+may have changed, Hashashin will be a great tool for you to utilize.</p>
+<p>Hashashin will be continuously changing and improving as we integrate
+it into more platforms - much of the reason these changes live on a
+<code>develop</code> branch. If you are interested in either
+contributing to or utilizing Hashashin, feel free to open a PR or issue
+on the <a href="https://github.com/riverloopsec/hashashin">Hashashin
+Github</a> or reach out to the team at <a
+href="mailto:hashashin@twosixtech.com">hashashin@twosixtech.com</a>.</p>
+<p>Finally, I would like to shout out the Pilot team for their support
+developing this tool. If you would like to find out more about these
+tools or use them in your own work, please reach out to the Pilot team
+at <a href="mailto:pilot@twosixtech.com">pilot@twosix.com</a> or view
+our <a
+href="https://www.riverloopsecurity.com/files/whitepapers/pilot.pdf">whitepaper</a>.</p>
+<section id="footnotes" class="footnotes footnotes-end-of-document"
+role="doc-endnotes">
+<hr />
+<ol>
+<li
+id="fn1"><p>https://www.riverloopsecurity.com/blog/2019/12/binary-hashing-hashashin/<a
+href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li
+id="fn2"><p>https://en.wikipedia.org/wiki/Locality-sensitive_hashing<a
+href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li
+id="fn3"><p>https://davidbieber.com/post/2019-05-10-weisfeiler-lehman-isomorphism-test/<a
+href="#fnref3" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn4"><p>https://inria.hal.science/hal-01648996/document<a
+href="#fnref4" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn5"><p>https://en.wikipedia.org/wiki/MinHash<a href="#fnref5"
+class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn6"><p>https://ieeexplore.ieee.org/document/8330221<a
+href="#fnref6" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li
+id="fn7"><p>https://github.com/riverloopsec/hashashin/blob/d4c8da25039f56d90cd0fec70d0ca0585d86bc9e/hashashin/classes.py#L412<a
+href="#fnref7" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn8"><p>https://binary.ninja<a href="#fnref8"
+class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn9"><p>https://en.wikipedia.org/wiki/Cyclomatic_complexity<a
+href="#fnref9" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn10"><p>https://ieeexplore.ieee.org/document/8330221<a
+href="#fnref10" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn11"><p>https://en.wikipedia.org/wiki/MinHash<a href="#fnref11"
+class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li
+id="fn12"><p>https://github.com/riverloopsec/hashashin/blob/d4c8da25039f56d90cd0fec70d0ca0585d86bc9e/hashashin/classes.py#L939-L967<a
+href="#fnref12" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li
+id="fn13"><p>https://github.com/riverloopsec/hashashin/blob/d4c8da25039f56d90cd0fec70d0ca0585d86bc9e/hashashin/metrics.py#L105-L110<a
+href="#fnref13" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li
+id="fn14"><p>https://www.riverloopsecurity.com/files/whitepapers/pilot.pdf<a
+href="#fnref14" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn15"><p>https://en.wikipedia.org/wiki/Elasticsearch<a
+href="#fnref15" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li
+id="fn16"><p>https://github.com/riverloopsec/hashashin/blob/e5da28fc85d4643ede1e46df3b6ec9e76106e402/hashashin/elasticsearch.py#L329-L392<a
+href="#fnref16" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li
+id="fn17"><p>https://github.com/riverloopsec/hashashin/blob/e5da28fc85d4643ede1e46df3b6ec9e76106e402/hashashin/elasticsearch.py#L329-L392<a
+href="#fnref17" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>
